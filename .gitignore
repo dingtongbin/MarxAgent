@@ -1,0 +1,11 @@
+/marxagent
+/dist/
+/coverage.out
+/coverage.html
+/.marx/
+.env
+.env.*
+*.exe
+*.test
+*.out
+/AGENTS.md
