@@ -27,9 +27,18 @@ type StateSnapshot struct {
 	Metadata  map[string]any `json:"metadata"`
 }
 
+type messageContentLayout struct {
+	offset int
+	length int
+}
+
 type state struct {
-	mu   sync.RWMutex
-	data StateSnapshot
+	mu                 sync.RWMutex
+	data               StateSnapshot
+	contentStorage     []ContentBlock
+	contentLayout      []messageContentLayout
+	contentHasRawJSON  bool
+	messageHasMetadata bool
 }
 
 type stateView struct {
@@ -37,31 +46,98 @@ type stateView struct {
 }
 
 func newState(config Config) *state {
-	return &state{data: StateSnapshot{
-		Messages:  cloneMessages(config.InitialMessages),
-		Variables: cloneMetadata(config.Variables),
-		AgentID:   config.AgentID,
-		ParentID:  config.ParentID,
-		Metadata:  cloneMetadata(config.Metadata),
-	}}
+	messages, storage, layout := cloneMessagesWithStorage(config.InitialMessages)
+	hasRawJSON, hasMetadata := messageFeatures(config.InitialMessages)
+	return &state{
+		data: StateSnapshot{
+			Messages:  messages,
+			Variables: cloneMetadata(config.Variables),
+			AgentID:   config.AgentID,
+			ParentID:  config.ParentID,
+			Metadata:  cloneMetadata(config.Metadata),
+		},
+		contentStorage:     storage,
+		contentLayout:      layout,
+		contentHasRawJSON:  hasRawJSON,
+		messageHasMetadata: hasMetadata,
+	}
 }
 
 func (s *state) appendMessage(message Message) {
 	s.mu.Lock()
-	s.data.Messages = append(s.data.Messages, cloneMessage(message))
+	s.appendMessageLocked(message)
 	s.mu.Unlock()
 }
 
 func (s *state) appendMessages(messages []Message) {
 	s.mu.Lock()
-	s.data.Messages = append(s.data.Messages, cloneMessages(messages)...)
+	for _, message := range messages {
+		s.appendMessageLocked(message)
+	}
 	s.mu.Unlock()
+}
+
+func (s *state) appendMessageLocked(message Message) {
+	cloned := message
+	cloned.Metadata = cloneMetadata(message.Metadata)
+	if message.Metadata != nil {
+		s.messageHasMetadata = true
+	}
+	for _, block := range message.Content {
+		if block.Input != nil || block.Output != nil {
+			s.contentHasRawJSON = true
+		}
+	}
+	if message.Content == nil {
+		s.data.Messages = append(s.data.Messages, cloned)
+		s.contentLayout = append(s.contentLayout, messageContentLayout{})
+		return
+	}
+
+	required := len(s.contentStorage) + len(message.Content)
+	if required > cap(s.contentStorage) {
+		storage := make([]ContentBlock, len(s.contentStorage), required+required/2+1)
+		copy(storage, s.contentStorage)
+		s.contentStorage = storage
+		s.rebuildContentPointersLocked()
+	}
+	offset := len(s.contentStorage)
+	s.contentStorage = append(s.contentStorage, message.Content...)
+	end := len(s.contentStorage)
+	for index := offset; index < end; index++ {
+		if s.contentStorage[index].Input != nil {
+			s.contentStorage[index].Input = cloneRawJSON(s.contentStorage[index].Input)
+		}
+		if s.contentStorage[index].Output != nil {
+			s.contentStorage[index].Output = cloneRawJSON(s.contentStorage[index].Output)
+		}
+	}
+	cloned.Content = s.contentStorage[offset:end:end]
+	s.data.Messages = append(s.data.Messages, cloned)
+	s.contentLayout = append(s.contentLayout, messageContentLayout{offset: offset, length: len(message.Content)})
+}
+
+func (s *state) rebuildContentPointersLocked() {
+	for index, layout := range s.contentLayout {
+		if s.data.Messages[index].Content == nil {
+			continue
+		}
+		end := layout.offset + layout.length
+		s.data.Messages[index].Content = s.contentStorage[layout.offset:end:end]
+	}
 }
 
 func (s *state) snapshot() StateSnapshot {
 	s.mu.RLock()
+	messages, _ := cloneStateMessages(
+		s.data.Messages,
+		s.contentStorage,
+		s.contentLayout,
+		s.contentHasRawJSON,
+		s.messageHasMetadata,
+	)
 	snapshot := StateSnapshot{
-		Messages:  cloneMessages(s.data.Messages),
+		Messages:  messages,
 		Variables: cloneMetadata(s.data.Variables),
 		AgentID:   s.data.AgentID,
 		ParentID:  s.data.ParentID,
@@ -98,32 +174,19 @@ func cloneMessage(message Message) Message {
 	return cloned
 }
 
-const batchedMessageCloneThreshold = 256
-
 func cloneMessages(messages []Message) []Message {
-	if messages == nil {
-		return nil
-	}
-	cloned := make([]Message, len(messages))
-	if len(messages) < batchedMessageCloneThreshold {
-		cloneMessageRange(messages, cloned, nil)
-		return cloned
-	}
-	allContent := make([]ContentBlock, countContentBlocks(messages))
-	cloneMessageRange(messages, cloned, allContent)
+	cloned, _, _ := cloneMessagesWithStorage(messages)
 	return cloned
 }
 
-func countContentBlocks(messages []Message) int {
-	count := 0
-	for _, message := range messages {
-		count += len(message.Content)
+func cloneMessagesWithStorage(messages []Message) ([]Message, []ContentBlock, []messageContentLayout) {
+	if messages == nil {
+		return nil, nil, nil
 	}
-	return count
-}
-
-func cloneMessageRange(messages []Message, cloned []Message, allContent []ContentBlock) {
-	contentOffset := 0
+	cloned := make([]Message, len(messages))
+	storage := make([]ContentBlock, countContentBlocks(messages))
+	layout := make([]messageContentLayout, len(messages))
+	offset := 0
 	for index, message := range messages {
 		cloned[index] = message
 		if message.Metadata != nil {
@@ -132,13 +195,8 @@ func cloneMessageRange(messages []Message, cloned []Message, allContent []Conten
 		if message.Content == nil {
 			continue
 		}
-		end := contentOffset + len(message.Content)
-		var content []ContentBlock
-		if allContent == nil {
-			content = make([]ContentBlock, len(message.Content))
-		} else {
-			content = allContent[contentOffset:end:end]
-		}
+		end := offset + len(message.Content)
+		content := storage[offset:end:end]
 		copy(content, message.Content)
 		for contentIndex := range content {
 			if content[contentIndex].Input != nil {
@@ -149,8 +207,76 @@ func cloneMessageRange(messages []Message, cloned []Message, allContent []Conten
 			}
 		}
 		cloned[index].Content = content
-		contentOffset = end
+		layout[index] = messageContentLayout{offset: offset, length: len(message.Content)}
+		offset = end
 	}
+	return cloned, storage, layout
+}
+
+func cloneStateMessages(
+	messages []Message,
+	storage []ContentBlock,
+	layout []messageContentLayout,
+	copyRawJSON bool,
+	copyMetadata bool,
+) ([]Message, []ContentBlock) {
+	if messages == nil {
+		return nil, nil
+	}
+	cloned := make([]Message, len(messages))
+	copy(cloned, messages)
+	clonedStorage := make([]ContentBlock, len(storage))
+	copy(clonedStorage, storage)
+	if copyMetadata {
+		for index, message := range messages {
+			if message.Metadata != nil {
+				cloned[index].Metadata = cloneMetadata(message.Metadata)
+			}
+		}
+	}
+	if copyRawJSON {
+		for index := range clonedStorage {
+			if clonedStorage[index].Input != nil {
+				clonedStorage[index].Input = cloneRawJSON(clonedStorage[index].Input)
+			}
+			if clonedStorage[index].Output != nil {
+				clonedStorage[index].Output = cloneRawJSON(clonedStorage[index].Output)
+			}
+		}
+	}
+	for index, message := range messages {
+		if message.Content == nil {
+			continue
+		}
+		contentLayout := layout[index]
+		end := contentLayout.offset + contentLayout.length
+		cloned[index].Content = clonedStorage[contentLayout.offset:end:end]
+	}
+	return cloned, clonedStorage
+}
+
+func messageFeatures(messages []Message) (bool, bool) {
+	hasRawJSON := false
+	hasMetadata := false
+	for _, message := range messages {
+		if message.Metadata != nil {
+			hasMetadata = true
+		}
+		for _, block := range message.Content {
+			if block.Input != nil || block.Output != nil {
+				hasRawJSON = true
+			}
+		}
+	}
+	return hasRawJSON, hasMetadata
+}
+
+func countContentBlocks(messages []Message) int {
+	count := 0
+	for _, message := range messages {
+		count += len(message.Content)
+	}
+	return count
 }
 
 func cloneContentBlocks(blocks []ContentBlock) []ContentBlock {

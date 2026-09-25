@@ -74,6 +74,40 @@ func TestStateSnapshotsAndViewsAreDeeplyImmutable(t *testing.T) {
 	}
 }
 
+func TestStateHandlesNilContentAndStorageGrowth(t *testing.T) {
+	state := newState(Config{
+		AgentID: "agent",
+		InitialMessages: []Message{{
+			ID:        "nil-content",
+			Role:      RoleUser,
+			CreatedAt: time.Now().UTC(),
+		}},
+	})
+	state.appendMessage(Message{
+		ID:        "nil-appended",
+		Role:      RoleUser,
+		CreatedAt: time.Now().UTC(),
+	})
+	state.appendMessage(validTestMessage("content"))
+	state.appendMessage(Message{
+		ID:        "metadata",
+		Role:      RoleUser,
+		CreatedAt: time.Now().UTC(),
+		Content: []ContentBlock{{
+			Type:  ContentTypeToolUse,
+			Input: json.RawMessage(`{"value":1}`),
+		}},
+		Metadata: map[string]any{"source": "test"},
+	})
+	snapshot := state.snapshot()
+	if len(snapshot.Messages) != 4 || snapshot.Messages[0].Content != nil || snapshot.Messages[1].Content != nil {
+		t.Fatalf("nil-content state snapshot = %#v", snapshot.Messages)
+	}
+	if string(snapshot.Messages[3].Content[0].Input) != `{"value":1}` {
+		t.Fatalf("raw content was not preserved: %#v", snapshot.Messages[3])
+	}
+}
+
 func TestStateConcurrentSnapshotsAndAppends(t *testing.T) {
 	state := newState(Config{AgentID: "agent"})
 	var waitGroup sync.WaitGroup
