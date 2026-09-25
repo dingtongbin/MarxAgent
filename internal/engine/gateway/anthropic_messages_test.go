@@ -848,8 +848,14 @@ func TestAnthropicGatewayEndToEnd(t *testing.T) {
 	if len(texts) != 1 || texts[0] != "hi" {
 		t.Fatalf("texts = %#v", texts)
 	}
-	if received.Model != "claude-sonnet-4-5" || !received.Stream || received.System != "be terse" {
+	if received.Model != "claude-sonnet-4-5" || !received.Stream {
 		t.Fatalf("request = %#v", received)
+	}
+	// The cache mapper promotes the system prompt to a block list so a boundary
+	// can be attached to it, so the decoded field is a block array.
+	system, isBlocks := received.System.([]any)
+	if !isBlocks || len(system) != 1 {
+		t.Fatalf("system = %#v", received.System)
 	}
 	if len(received.Tools) != 1 || received.Tools[0].Name != "read" {
 		t.Fatalf("tools = %#v", received.Tools)

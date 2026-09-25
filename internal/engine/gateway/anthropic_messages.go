@@ -294,9 +294,9 @@ func (a *anthropicMessagesAdapter) TakeUsage() Usage {
 	return usage
 }
 
-// ApplyCacheHints is a no-op until the breakpoint mapper lands; the format caches
-// any stable prefix automatically only when a breakpoint marks it.
-func (a *anthropicMessagesAdapter) ApplyCacheHints(any, CacheHints) error { return nil }
+func (a *anthropicMessagesAdapter) ApplyCacheHints(payload any, hints CacheHints) error {
+	return anthropicCacheHintMapper{}.ApplyCacheHints(payload, hints)
+}
 
 func (a *anthropicMessagesAdapter) ExtractCacheStats(usage Usage) CacheStats {
 	return CacheStats{
