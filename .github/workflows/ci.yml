@@ -1,0 +1,194 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.27.x"
+  GOFLAGS: "-mod=readonly"
+
+jobs:
+  static-guards:
+    name: Static guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Verify formatting
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l $(find . -name '*.go' -not -path './.git/*'))"
+          if [ -n "$unformatted" ]; then
+            printf 'Unformatted Go files:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Verify module state
+        shell: bash
+        run: |
+          go mod verify
+          go mod tidy -diff
+          module_count="$(go list -m all | wc -l)"
+          if [ "$module_count" -ne 1 ]; then
+            printf 'External dependencies are not allowed in the L1 initialization:\n'
+            go list -m all
+            exit 1
+          fi
+      - name: Enforce CGO and L1 dependency boundaries
+        shell: bash
+        run: |
+          if find . -name '*.go' -not -path './.git/*' -print0 | xargs -0 grep -nE '(^|[[:space:]])import[[:space:]]+(_[[:space:]]+)?"C"|//[[:space:]]*#cgo'; then
+            printf 'CGO usage is forbidden.\n'
+            exit 1
+          fi
+          nonstandard="$(go list -deps -f '{{if and (not .Standard) (not .Module)}}{{.ImportPath}}{{end}}' ./internal/core)"
+          if [ -n "$nonstandard" ]; then
+            printf 'L1 imports non-standard packages:\n%s\n' "$nonstandard"
+            exit 1
+          fi
+      - name: Run architecture guard tests
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./internal/core
+
+  native-tests:
+    name: Native tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 ./...
+      - name: Vet
+        env:
+          CGO_ENABLED: "0"
+        run: go vet ./...
+
+  cross-builds:
+    name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build without CGO
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./...
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run race detector
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 ./...
+
+  coverage:
+    name: L1 coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Enforce 100 percent statement coverage
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          go test -count=1 -coverprofile=coverage.out ./internal/core
+          go tool cover -func=coverage.out
+          coverage="$(go tool cover -func=coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 100.0) exit 1 }'
+
+  performance:
+    name: L1 performance gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Enforce latency and memory gates
+        env:
+          CGO_ENABLED: "0"
+          MARXAGENT_PERFORMANCE: "1"
+        shell: bash
+        run: |
+          for gate in 1000_message_snapshot empty_loop 10_hook_trigger 10k_message_agent_memory event_dispatch_p99_with_100_subscribers; do
+            go test -run "^TestL1PerformanceGates$/${gate}$" -count=3 ./internal/core
+          done
+      - name: Record benchmarks
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          go test -run '^$' -benchtime=10000x -count=1 -bench '^BenchmarkEventBusPublish100Subscribers$' ./internal/core
+          go test -run '^$' -benchtime=500ms -count=1 -bench 'Benchmark(AgentEmptyLoop|StateSnapshot1000Messages|HookTrigger10Hooks|AgentMemory10000Messages)$' ./internal/core
