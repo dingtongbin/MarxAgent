@@ -901,6 +901,12 @@ func (r *responseRecorder) event(payload string) {
 	_ = r.writer.WriteEvent("", json.RawMessage(payload))
 }
 
+// named writes an event with an explicit type, which formats such as Anthropic
+// require because the payload does not always carry the type.
+func (r *responseRecorder) named(name, payload string) {
+	_ = r.writer.WriteEvent(name, json.RawMessage(payload))
+}
+
 func (r *responseRecorder) done() {
 	_ = r.writer.WriteRawData("[DONE]")
 	_ = r.writer.Flush()
