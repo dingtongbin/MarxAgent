@@ -41,8 +41,9 @@ func TestLinuxBubblewrapBackend(t *testing.T) {
 // images, and no amount of argument fixing can work around that.
 func skipIfKernelDeniesSandbox(t *testing.T, stderr string) {
 	t.Helper()
-	for _, marker := range []string{"No permissions to creating new namespace", "Operation not permitted", "permission denied", "unprivileged userns"} {
-		if strings.Contains(stderr, marker) {
+	lowered := strings.ToLower(stderr)
+	for _, marker := range []string{"permission denied", "operation not permitted", "no permissions to creating new namespace", "unprivileged userns", "setting up uid map", "creating new namespace"} {
+		if strings.Contains(lowered, marker) {
 			t.Skipf("the kernel or host policy denies sandbox namespaces: %s", strings.TrimSpace(stderr))
 		}
 	}

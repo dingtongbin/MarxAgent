@@ -6,10 +6,12 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func platformName() string {
@@ -18,7 +20,48 @@ func platformName() string {
 
 func platformAvailable() bool {
 	path, err := exec.LookPath("bwrap")
-	return err == nil && trustedBackendPath(path)
+	if err != nil || !trustedBackendPath(path) {
+		return false
+	}
+	return probeBubblewrap(path)
+}
+
+// probeBubblewrap verifies that the host really lets bubblewrap build a user
+// namespace. Hardened kernels and distribution policies can leave the binary
+// installed while denying the namespace, and a sandbox that cannot isolate
+// anything has to be reported as unsupported rather than quietly running
+// commands with no isolation at all.
+func probeBubblewrap(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for _, candidate := range []struct {
+		file      string
+		arguments []string
+	}{
+		{file: "/bin/sh", arguments: []string{"-c", ":"}},
+		{file: "/usr/bin/sh", arguments: []string{"-c", ":"}},
+		{file: "/bin/true"},
+		{file: "/usr/bin/true"},
+	} {
+		if info, err := os.Stat(candidate.file); err != nil || info.IsDir() {
+			continue
+		}
+		arguments := append([]string{
+			"--unshare-user-try",
+			"--unshare-pid",
+			"--ro-bind", "/", "/",
+			"--dev", "/dev",
+			"--proc", "/proc",
+			"--",
+		}, append([]string{candidate.file}, candidate.arguments...)...)
+		command := exec.CommandContext(ctx, path, arguments...)
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		if command.Run() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func platformCapabilities() Capabilities {

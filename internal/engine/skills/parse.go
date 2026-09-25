@@ -4,10 +4,12 @@ package skills
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -115,7 +117,9 @@ func resourcePath(root, relative string) (string, error) {
 	candidate := filepath.Join(root, clean)
 	resolved, err := filepath.EvalSymlinks(candidate)
 	if err != nil {
-		if os.IsNotExist(err) {
+		// A path component that is a file rather than a directory is reported
+		// as a missing resource, not as an internal resolution failure.
+		if os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR) {
 			return candidate, nil
 		}
 		return "", fmt.Errorf("skills: resolve resource %s: %w", relative, err)

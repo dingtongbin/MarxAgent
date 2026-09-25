@@ -99,6 +99,17 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap
           bwrap --version
+      - name: Enable unprivileged user namespaces
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sysctl kernel.unprivileged_userns_clone || true
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
+          if ! bwrap --unshare-user-try --ro-bind / / --dev /dev --proc /proc -- /bin/sh -c ':'; then
+            printf 'bwrap cannot create a user namespace on this runner\n'
+          fi
       - name: Test
         env:
           CGO_ENABLED: "0"
@@ -182,6 +193,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends bubblewrap
           bwrap --version
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Run race detector
         env:
           CGO_ENABLED: "1"

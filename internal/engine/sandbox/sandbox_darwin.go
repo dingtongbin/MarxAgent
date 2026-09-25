@@ -103,6 +103,10 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 func buildSBPL(engine *Engine, executable, tempRoot string) (string, error) {
 	var builder strings.Builder
 	builder.WriteString("(version 1)\n(deny default)\n")
+	// Seatbelt evaluates every path component, so a process cannot even traverse
+	// into an allowed subpath unless metadata reads are permitted. Without this
+	// rule the sandboxed binary aborts before it reaches its entry point.
+	builder.WriteString("(allow file-read-metadata)\n")
 	builder.WriteString("(allow signal)\n")
 	builder.WriteString("(allow sysctl-read)\n")
 	builder.WriteString("(allow mach-lookup)\n")
