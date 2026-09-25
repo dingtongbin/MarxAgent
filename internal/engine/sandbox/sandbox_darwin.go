@@ -103,12 +103,9 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 func buildSBPL(engine *Engine, executable, tempRoot string) (string, error) {
 	var builder strings.Builder
 	builder.WriteString("(version 1)\n(deny default)\n")
-	builder.WriteString("(allow signal (target same-sandbox))\n")
+	builder.WriteString("(allow signal)\n")
 	builder.WriteString("(allow sysctl-read)\n")
 	builder.WriteString("(allow mach-lookup)\n")
-	builder.WriteString("(allow mach-host*)\n")
-	builder.WriteString("(allow iokit-open)\n")
-	builder.WriteString("(allow iokit-get-properties)\n")
 	builder.WriteString("(allow file-ioctl)\n")
 	if engine.policy.subprocess {
 		builder.WriteString("(allow process-fork)\n(allow process-exec*)\n")

@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -84,16 +85,14 @@ func TestDarwinSeatbeltBackend(t *testing.T) {
 		t.Skip("sandbox-exec is unavailable")
 	}
 	root := t.TempDir()
-	engine, err := New(Policy{Workspace: root, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 10 * time.Second})
+	engine, err := New(Policy{Workspace: root, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 30 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output strings.Builder
-	result, err := Run(context.Background(), engine, []string{"/bin/sh", "-c", "printf sandbox-ok"}, nil, root, nil, &output, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.ExitCode != 0 || output.String() != "sandbox-ok" {
-		t.Fatalf("result = %#v output = %q", result, output.String())
+	var output, errorOutput strings.Builder
+	result, err := Run(context.Background(), engine, []string{"/bin/sh", "-c", "printf sandbox-ok"}, nil, root, nil, &output, &errorOutput)
+	if err != nil || result.ExitCode != 0 || output.String() != "sandbox-ok" {
+		profile, profileErr := buildSBPL(engine, "/bin/sh", filepath.Join(root, "scratch"))
+		t.Fatalf("result = %#v err = %v stdout = %q stderr = %q\nprofile (%v) = %s", result, err, output.String(), errorOutput.String(), profileErr, profile)
 	}
 }

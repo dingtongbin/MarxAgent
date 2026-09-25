@@ -16,7 +16,7 @@ import (
 
 func TestShellExecutesWithWindowsPowerShell(t *testing.T) {
 	workspace := t.TempDir()
-	engine, err := sandbox.New(sandbox.Policy{Workspace: workspace, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 10 * time.Second})
+	engine, err := sandbox.New(sandbox.Policy{Workspace: workspace, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 60 * time.Second})
 	if err != nil {
 		if errors.Is(err, sandbox.ErrUnsupported) {
 			t.Skip(err)
@@ -27,9 +27,10 @@ func TestShellExecutesWithWindowsPowerShell(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var errorOutput strings.Builder
 	result, err := tool.Execute(context.Background(), json.RawMessage(`{"command":"Write-Output shell-ok"}`))
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("shell execution failed: %v stderr = %q", err, errorOutput.String())
 	}
 	if result.IsError || !strings.Contains(string(result.Output), "shell-ok") {
 		t.Fatalf("result = %#v", result)

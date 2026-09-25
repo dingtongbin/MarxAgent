@@ -59,6 +59,36 @@ func pathWithin(root, target string) bool {
 	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
+// platformRoots collects every directory the AppContainer is granted. The
+// sandbox backend rewrites the DACL of each root it is given, so only
+// directories this process may modify can be listed: system directories such as
+// the PowerShell home are deliberately absent and are reached through the
+// default AppContainer access instead.
+func platformRoots(engine *Engine, dir string) []string {
+	roots := make([]string, 0, 8)
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		canonical := canonicalPath(path)
+		for _, existing := range roots {
+			if pathWithin(existing, canonical) {
+				return
+			}
+		}
+		roots = append(roots, canonical)
+	}
+	add(engine.policy.workspace)
+	for _, root := range engine.policy.readOnlyRoots {
+		add(root)
+	}
+	for _, root := range engine.policy.writableRoots {
+		add(root)
+	}
+	add(dir)
+	return roots
+}
+
 func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir string) (Process, error) {
 	if !winsandbox.Available() {
 		return nil, fmt.Errorf("%w: Windows AppContainer APIs are unavailable", ErrUnsupported)
@@ -70,6 +100,17 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 	if writable && !engine.policy.network {
 		return nil, fmt.Errorf("%w: Windows writable sandbox cannot deny network", ErrInvalidPolicy)
 	}
+	executable, err := resolveExecutable(argv[0])
+	if err != nil {
+		return nil, err
+	}
+	roots := platformRoots(engine, dir)
+	if len(roots) == 0 {
+		return nil, fmt.Errorf("%w: Windows sandbox has no allowed roots", ErrInvalidPolicy)
+	}
+	// The AppContainer inherits a filtered environment, so the command is
+	// resolved here and passed as an absolute path.
+	command := append([]string{executable}, argv[1:]...)
 	stdinReader, stdinWriter, err := os.Pipe()
 	if err != nil {
 		return nil, err
@@ -96,15 +137,14 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 		windowsSandboxEnvMu.Lock()
 		previous, hadPrevious := os.LookupEnv("WINDOWS_SANDBOX_WAIT_MS")
 		_ = os.Setenv("WINDOWS_SANDBOX_WAIT_MS", strconv.FormatInt(engine.policy.timeout.Milliseconds(), 10))
-		allowedRoots := append([]string(nil), engine.policy.readOnlyRoots...)
-		allowedRoots = append(allowedRoots, engine.policy.writableRoots...)
+		allowedRoots := append([]string(nil), roots...)
 		result, runErr := winsandbox.Run(winsandbox.Spec{
 			WritableRoots:   allowedRoots,
 			ForbidReadRoots: append([]string(nil), engine.policy.forbiddenRoots...),
 			Network:         engine.policy.network,
 			Writable:        writable,
 			TempPrefix:      "marxagent-sandbox-",
-		}, append([]string(nil), argv...), winsandbox.RunOptions{
+		}, append([]string(nil), command...), winsandbox.RunOptions{
 			Stdin:  stdinReader,
 			Stdout: stdoutWriter,
 			Stderr: stderrWriter,

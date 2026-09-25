@@ -259,7 +259,7 @@ func TestNilEngineAccessors(t *testing.T) {
 }
 
 func TestAllowsPathCoversReadOnlyAndWritableRoots(t *testing.T) {
-	root := t.TempDir()
+	root := canonicalPath(t.TempDir())
 	readOnly := filepath.Join(root, "ro")
 	writable := filepath.Join(root, "rw")
 	if err := os.MkdirAll(readOnly, 0o755); err != nil {
@@ -268,9 +268,14 @@ func TestAllowsPathCoversReadOnlyAndWritableRoots(t *testing.T) {
 	if err := os.MkdirAll(writable, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Policy roots are stored canonical, so the test must build them the same
+	// way allowsPath canonicalizes the paths it is asked about.
 	policy := normalizedPolicy{workspace: root, readOnlyRoots: []string{readOnly}, writableRoots: []string{writable}}
 	if !policy.allowsPath(readOnly) || !policy.allowsPath(writable) || !policy.allowsPath(root) {
 		t.Fatal("declared roots were rejected")
+	}
+	if !policy.allowsPath(filepath.Join(root, "ro", "nested", "file.txt")) {
+		t.Fatal("path below a declared root was rejected")
 	}
 	if policy.allowsPath(t.TempDir()) {
 		t.Fatal("unrelated path was accepted")

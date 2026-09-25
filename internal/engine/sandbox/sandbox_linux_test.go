@@ -26,10 +26,10 @@ func TestLinuxBubblewrapBackend(t *testing.T) {
 	result, err := Run(context.Background(), engine, []string{"/bin/sh", "-c", "printf sandbox-ok"}, nil, root, nil, &output, &errorOutput)
 	skipIfKernelDeniesSandbox(t, errorOutput.String())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("sandbox run failed: %v\nstdout = %q\nstderr = %q", err, output.String(), errorOutput.String())
 	}
 	if result.ExitCode != 0 || output.String() != "sandbox-ok" {
-		t.Fatalf("result = %#v output = %q stderr = %q", result, output.String(), errorOutput.String())
+		t.Fatalf("result = %#v stdout = %q stderr = %q", result, output.String(), errorOutput.String())
 	}
 	if !pathWithin(engine.Policy().Workspace, root) {
 		t.Fatalf("workspace %q does not contain %q", engine.Policy().Workspace, root)
