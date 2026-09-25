@@ -109,10 +109,7 @@ func cloneMessages(messages []Message) []Message {
 		cloneMessageRange(messages, cloned, nil)
 		return cloned
 	}
-	var allContent []ContentBlock
-	if count := countContentBlocks(messages); count > 0 {
-		allContent = make([]ContentBlock, count)
-	}
+	allContent := make([]ContentBlock, countContentBlocks(messages))
 	cloneMessageRange(messages, cloned, allContent)
 	return cloned
 }

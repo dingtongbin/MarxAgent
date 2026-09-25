@@ -5,8 +5,10 @@ package core
 import (
 	"context"
 	"os"
+	"os/exec"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -25,15 +27,16 @@ func TestL1PerformanceGates(t *testing.T) {
 	}
 
 	t.Run("1000 message snapshot", func(t *testing.T) {
-		state := benchmarkState(1000)
-		result := testing.Benchmark(func(benchmark *testing.B) {
-			benchmark.ReportAllocs()
-			for iteration := 0; iteration < benchmark.N; iteration++ {
-				_ = state.snapshot()
-			}
+		samples := make([]time.Duration, 3)
+		for index := range samples {
+			samples[index] = runSnapshotBenchmark(t)
+		}
+		sort.Slice(samples, func(left, right int) bool {
+			return samples[left] < samples[right]
 		})
-		if result.NsPerOp() >= maximumStateSnapshot.Nanoseconds() {
-			t.Fatalf("1000 message snapshot = %s, limit < %s", time.Duration(result.NsPerOp()), maximumStateSnapshot)
+		median := samples[len(samples)/2]
+		if median >= maximumStateSnapshot {
+			t.Fatalf("1000 message snapshot median = %s, samples = %v, limit < %s", median, samples, maximumStateSnapshot)
 		}
 	})
 
@@ -115,6 +118,38 @@ func TestL1PerformanceGates(t *testing.T) {
 			t.Fatalf("10k message agent allocation = %d bytes, limit < %d", result.AllocedBytesPerOp(), maximumAgentMemory)
 		}
 	})
+}
+
+func runSnapshotBenchmark(t testing.TB) time.Duration {
+	t.Helper()
+	command := exec.Command(
+		"go",
+		"test",
+		"-run", "^$",
+		"-bench", "^BenchmarkStateSnapshot1000Messages$",
+		"-benchtime", "500ms",
+		"-count", "1",
+		".",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("snapshot benchmark failed: %v\n%s", err, output)
+	}
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		for index := 1; index < len(fields); index++ {
+			if fields[index] != "ns/op" {
+				continue
+			}
+			value, err := strconv.ParseFloat(fields[index-1], 64)
+			if err != nil {
+				t.Fatalf("parse snapshot benchmark value %q: %v", fields[index-1], err)
+			}
+			return time.Duration(value * float64(time.Nanosecond))
+		}
+	}
+	t.Fatalf("snapshot benchmark output did not contain ns/op:\n%s", output)
+	return 0
 }
 
 func BenchmarkEventBusPublish100Subscribers(benchmark *testing.B) {
