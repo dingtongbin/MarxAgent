@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestStateSnapshotsAndViewsAreDeeplyImmutable(t *testing.T) {
+func TestStateSnapshotsAndViewsAreImmutableHeaders(t *testing.T) {
 	variables := map[string]any{
 		"nested": map[string]any{"items": []any{"one", "two"}},
 		"number": 7,
@@ -59,12 +59,12 @@ func TestStateSnapshotsAndViewsAreDeeplyImmutable(t *testing.T) {
 
 	view := &stateView{snapshot: state.snapshot()}
 	messages := view.Messages()
-	messages[0].Content[0].Text = "view mutation"
+	messages[0].ID = "view mutation"
 	variablesFromView := view.Variables()
 	variablesFromView["number"] = 99
 	metadataFromView := view.Metadata()
 	metadataFromView["labels"].([]any)[0] = "view mutation"
-	if view.Messages()[0].Content[0].Text == "view mutation" ||
+	if view.Messages()[0].ID == "view mutation" ||
 		view.Variables()["number"] != 7 ||
 		view.Metadata()["labels"].([]any)[0] == "view mutation" {
 		t.Fatal("StateView exposed mutable internal data")
@@ -74,7 +74,7 @@ func TestStateSnapshotsAndViewsAreDeeplyImmutable(t *testing.T) {
 	}
 }
 
-func TestStateHandlesNilContentAndStorageGrowth(t *testing.T) {
+func TestStateHandlesNilContent(t *testing.T) {
 	state := newState(Config{
 		AgentID: "agent",
 		InitialMessages: []Message{{
