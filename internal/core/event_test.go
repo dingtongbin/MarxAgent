@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -11,13 +12,14 @@ import (
 )
 
 type stagedDoneContext struct {
-	calls atomic.Int32
-	done  chan struct{}
-	once  sync.Once
+	calls     atomic.Int32
+	threshold int32
+	done      chan struct{}
+	once      sync.Once
 }
 
-func newStagedDoneContext() *stagedDoneContext {
-	return &stagedDoneContext{done: make(chan struct{})}
+func newStagedDoneContext(threshold int32) *stagedDoneContext {
+	return &stagedDoneContext{threshold: threshold, done: make(chan struct{})}
 }
 
 func (ctx *stagedDoneContext) Deadline() (time.Time, bool) {
@@ -25,7 +27,7 @@ func (ctx *stagedDoneContext) Deadline() (time.Time, bool) {
 }
 
 func (ctx *stagedDoneContext) Done() <-chan struct{} {
-	if ctx.calls.Add(1) >= 3 {
+	if ctx.calls.Add(1) >= ctx.threshold {
 		ctx.once.Do(func() { close(ctx.done) })
 	}
 	return ctx.done
@@ -45,10 +47,14 @@ func (ctx *stagedDoneContext) Value(any) any {
 }
 
 func TestEventSubscriptionNextCancelsWhileWaiting(t *testing.T) {
-	ctx := newStagedDoneContext()
-	subscriber := &eventSubscription{ctx: ctx, wake: make(chan struct{}, 1)}
-	if _, open := subscriber.next(); open {
-		t.Fatal("next() returned an event after cancellation")
+	for _, threshold := range []int32{1, 2, 3} {
+		t.Run(fmt.Sprintf("stage-%d", threshold), func(t *testing.T) {
+			ctx := newStagedDoneContext(threshold)
+			subscriber := &eventSubscription{ctx: ctx, wake: make(chan struct{}, 1)}
+			if _, open := subscriber.next(); open {
+				t.Fatal("next() returned an event after cancellation")
+			}
+		})
 	}
 }
 
