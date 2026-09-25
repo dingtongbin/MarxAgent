@@ -35,14 +35,28 @@ func TestFormatsAreSorted(t *testing.T) {
 		}
 	}
 	formats := Formats()
-	if len(formats) != len(registered) {
-		t.Fatalf("formats = %v", formats)
+	for _, format := range registered {
+		if !slicesContains(formats, format) {
+			t.Fatalf("format %q is missing from %v", format, formats)
+		}
+	}
+	if !slicesContains(formats, FormatOpenAICompletions) {
+		t.Fatalf("the completions format is missing from %v", formats)
 	}
 	for index := 1; index < len(formats); index++ {
 		if formats[index-1] >= formats[index] {
 			t.Fatalf("formats are not sorted: %v", formats)
 		}
 	}
+}
+
+func slicesContains(values []APIFormat, target APIFormat) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
 }
 
 func TestNewUsesRegisteredFormat(t *testing.T) {

@@ -82,7 +82,7 @@ func ValidateRequest(request *core.ChatRequest) error {
 		if strings.TrimSpace(spec.Name) == "" {
 			return fmt.Errorf("%w: tool %d has no name", ErrInvalidRequest, index)
 		}
-		if !IsJSONObject(spec.Parameters) {
+		if len(spec.Parameters) > 0 && !IsJSONObject(spec.Parameters) {
 			return fmt.Errorf("%w: tool %q parameters must be a JSON object", ErrInvalidRequest, spec.Name)
 		}
 		if _, exists := declared[spec.Name]; exists {
@@ -131,7 +131,7 @@ func validateBlock(block core.ContentBlock, declared map[string]struct{}, checkT
 			return errors.New("image block has no data")
 		}
 		if NormalizeMediaType(block.MediaFormat) == "" {
-			return errors.New("image block has no media format")
+			return fmt.Errorf("unsupported image media type %q", block.MediaFormat)
 		}
 		return nil
 	case core.ContentTypeThinking:
@@ -148,7 +148,7 @@ func validateBlock(block core.ContentBlock, declared map[string]struct{}, checkT
 		if block.ToolCallID == "" || block.ToolName == "" {
 			return errors.New("tool call has no id or name")
 		}
-		if !IsJSONObject(block.Input) {
+		if len(block.Input) > 0 && !IsJSONObject(block.Input) {
 			return errors.New("tool call input must be a JSON object")
 		}
 		if checkTools {

@@ -180,6 +180,18 @@ func (w *StreamWriter) WriteEvent(name string, payload any) error {
 	return err
 }
 
+// WriteRawData writes a data line verbatim. Providers use it for non-JSON
+// payloads such as the OpenAI "[DONE]" sentinel.
+func (w *StreamWriter) WriteRawData(data string) error {
+	if w == nil || w.writer == nil {
+		return errors.New("gateway: stream writer is not initialized")
+	}
+	if _, err := fmt.Fprintf(w.writer, "data: %s\n\n", data); err != nil {
+		return err
+	}
+	return nil
+}
+
 // WriteComment writes a comment line, which providers use as a keep-alive.
 func (w *StreamWriter) WriteComment(text string) error {
 	if w == nil || w.writer == nil {
