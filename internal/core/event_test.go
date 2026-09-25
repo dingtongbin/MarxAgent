@@ -10,6 +10,48 @@ import (
 	"time"
 )
 
+type stagedDoneContext struct {
+	calls atomic.Int32
+	done  chan struct{}
+	once  sync.Once
+}
+
+func newStagedDoneContext() *stagedDoneContext {
+	return &stagedDoneContext{done: make(chan struct{})}
+}
+
+func (ctx *stagedDoneContext) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+func (ctx *stagedDoneContext) Done() <-chan struct{} {
+	if ctx.calls.Add(1) >= 3 {
+		ctx.once.Do(func() { close(ctx.done) })
+	}
+	return ctx.done
+}
+
+func (ctx *stagedDoneContext) Err() error {
+	select {
+	case <-ctx.done:
+		return context.Canceled
+	default:
+		return nil
+	}
+}
+
+func (ctx *stagedDoneContext) Value(any) any {
+	return nil
+}
+
+func TestEventSubscriptionNextCancelsWhileWaiting(t *testing.T) {
+	ctx := newStagedDoneContext()
+	subscriber := &eventSubscription{ctx: ctx, wake: make(chan struct{}, 1)}
+	if _, open := subscriber.next(); open {
+		t.Fatal("next() returned an event after cancellation")
+	}
+}
+
 func TestEventBusFiltersPreservesOrderAndCopiesPublishData(t *testing.T) {
 	bus := &asyncEventBus{}
 	received := make(chan Event, 3)
