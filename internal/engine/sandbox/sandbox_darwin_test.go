@@ -73,7 +73,7 @@ func TestDarwinProfileAndHelpers(t *testing.T) {
 
 func TestDarwinStartReportsMissingCommand(t *testing.T) {
 	if !platformAvailable() {
-		t.Skip("sandbox-exec is unavailable or refuses to apply a profile on this host")
+		t.Skip("sandbox-exec cannot enforce the generated profile on this host")
 	}
 	engine := &Engine{policy: normalizedPolicy{timeout: time.Second, subprocess: true, network: true}}
 	if _, err := startPlatform(context.Background(), engine, []string{"missing-marxagent-command"}, nil, t.TempDir()); err == nil {
@@ -83,7 +83,7 @@ func TestDarwinStartReportsMissingCommand(t *testing.T) {
 
 func TestDarwinSeatbeltBackend(t *testing.T) {
 	if !platformAvailable() {
-		t.Skip("sandbox-exec is unavailable or refuses to apply a profile on this host")
+		t.Skip("sandbox-exec cannot enforce the generated profile on this host")
 	}
 	root := t.TempDir()
 	engine, err := New(Policy{Workspace: root, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 30 * time.Second})

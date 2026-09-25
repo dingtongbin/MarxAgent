@@ -26,18 +26,39 @@ func platformAvailable() bool {
 	return probeSeatbelt(path)
 }
 
-// probeSeatbelt verifies that the host can actually apply a profile. The
-// sandbox-exec shim is deprecated and newer systems abort instead of enforcing,
-// so an installed binary is not evidence that commands are being isolated.
+// probeSeatbelt verifies that the host can enforce the profile this package
+// actually generates. The sandbox-exec shim is deprecated, newer systems abort
+// instead of enforcing, and a probe with a different profile would report a
+// backend as usable while every real command dies with SIGABRT.
 func probeSeatbelt(path string) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	profile := "(version 1)\n(deny default)\n(allow file-read-metadata)\n(allow file-read*)\n" +
-		"(allow process-fork)\n(allow process-exec*)\n(allow signal)\n(allow sysctl-read)\n(allow mach-lookup)\n"
-	for _, candidate := range []string{"/usr/bin/true", "/bin/true", "/usr/bin/printf", "/bin/echo"} {
-		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() {
+	workspace, err := os.MkdirTemp("", "marxagent-probe-")
+	if err != nil {
+		return false
+	}
+	defer os.RemoveAll(workspace)
+	resolved, err := filepath.EvalSymlinks(workspace)
+	if err != nil {
+		resolved = workspace
+	}
+	engine := &Engine{policy: normalizedPolicy{
+		workspace:     resolved,
+		writableRoots: []string{resolved},
+		readOnlyRoots: darwinSystemReadRoots(),
+		subprocess:    true,
+		network:       true,
+		timeout:       10 * time.Second,
+		envAllowlist:  []string{"PATH"},
+	}}
+	for _, candidate := range []string{"/bin/sh", "/usr/bin/true", "/usr/bin/printf"} {
+		info, statErr := os.Stat(candidate)
+		if statErr != nil || info.IsDir() {
 			continue
+		}
+		profile, buildErr := buildSBPL(engine, candidate, resolved)
+		if buildErr != nil {
+			return false
 		}
 		command := exec.CommandContext(ctx, path, "-p", profile, candidate)
 		command.Stdout = io.Discard
