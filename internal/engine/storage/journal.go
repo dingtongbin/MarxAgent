@@ -16,6 +16,20 @@ import (
 	"sync"
 )
 
+// JournalStreams are the stream kinds the pipeline writes. Recovery uses the
+// list to tell a journal apart from an unrelated file.
+const (
+	StreamSession  = "session"
+	StreamEvents   = "events"
+	StreamSubAgent = "subagent"
+	StreamBroker   = "broker"
+)
+
+// JournalFileName maps a stream onto its journal file name.
+func JournalFileName(stream string) (string, error) {
+	return journalFileName(stream)
+}
+
 // JournalSink is the human readable half of the durability design: one JSON
 // object per line, append only, so a session can be read with cat, less or jq
 // and rebuilt without the database.

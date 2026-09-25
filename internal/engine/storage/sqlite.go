@@ -419,6 +419,85 @@ func (s *AuditSink) WriteCheckpoint(ctx context.Context, sessionID string, seq i
 	return nil
 }
 
+// EventRecord is one row of the audit ledger.
+type EventRecord struct {
+	SessionID string
+	EventType string
+	Payload   string
+	TS        time.Time
+}
+
+// SearchEvents finds audit records by substring. Unlike message search this
+// covers every record type, which is what makes the repair a recovery run did
+// inspectable from the outside.
+func (s *AuditSink) SearchEvents(ctx context.Context, sessionID, query string, limit int) ([]EventRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 50
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, ErrBufferClosed
+	}
+	statement := `SELECT session_id, event_type, payload, ts FROM events WHERE (? = '' OR session_id = ?)`
+	arguments := []any{sessionID, sessionID}
+	if strings.TrimSpace(query) != "" {
+		statement += ` AND payload LIKE ? ESCAPE '\'`
+		arguments = append(arguments, "%"+escapeLike(query)+"%")
+	}
+	statement += ` ORDER BY id LIMIT ?`
+	arguments = append(arguments, limit)
+	rows, err := s.db.QueryContext(ctx, statement, arguments...)
+	if err != nil {
+		return nil, fmt.Errorf("storage: search events: %w", err)
+	}
+	defer rows.Close()
+	records := make([]EventRecord, 0, 8)
+	for rows.Next() {
+		var record EventRecord
+		if err := rows.Scan(&record.SessionID, &record.EventType, &record.Payload, &record.TS); err != nil {
+			return nil, fmt.Errorf("storage: scan event: %w", err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("storage: read events: %w", err)
+	}
+	return records, nil
+}
+
+// ShutdownState reads the ledger half of the shutdown marker. An unset value
+// reads as dirty, since only an orderly shutdown writes it.
+func (s *AuditSink) ShutdownState(ctx context.Context) (string, error) {
+	var value sql.NullString
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT value FROM meta WHERE key = 'shutdown_state'`).Scan(&value); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ShutdownStateDirty, nil
+		}
+		return "", fmt.Errorf("storage: read shutdown state: %w", err)
+	}
+	if !value.Valid || value.String != ShutdownStateClean {
+		return ShutdownStateDirty, nil
+	}
+	return ShutdownStateClean, nil
+}
+
+// SetShutdownState records the shutdown outcome in the ledger.
+func (s *AuditSink) SetShutdownState(ctx context.Context, state string) error {
+	if state != ShutdownStateClean && state != ShutdownStateDirty {
+		return fmt.Errorf("storage: unknown shutdown state %q", state)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO meta(key, value) VALUES('shutdown_state', ?)
+		 ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+		state,
+	); err != nil {
+		return fmt.Errorf("storage: write shutdown state: %w", err)
+	}
+	return nil
+}
+
 // Checkpoint reads the recorded checkpoint of a session.
 func (s *AuditSink) Checkpoint(ctx context.Context, sessionID string) (seq int64, messageCount int, summary string, err error) {
 	s.mu.Lock()
