@@ -74,6 +74,13 @@ type UsageReporter interface {
 	TakeUsage() Usage
 }
 
+// ServerStateAdapter is implemented by formats that can keep conversation state
+// on the provider side. The gateway enables it only when the configuration asks
+// for it, because a resumed chain cannot be audited from the local history alone.
+type ServerStateAdapter interface {
+	EnableServerState(enabled bool)
+}
+
 type adapterFactory func() APIAdapter
 
 var adapterFactories = map[APIFormat]adapterFactory{}

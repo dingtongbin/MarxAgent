@@ -112,6 +112,9 @@ func NewWithAdapter(config Config, adapter APIAdapter) (*ProviderGateway, error)
 		mapper:  mapperFor(config.Format, adapter),
 		client:  client,
 	}
+	if stateful, ok := adapter.(ServerStateAdapter); ok {
+		stateful.EnableServerState(config.ServerState)
+	}
 	if !config.ServerState {
 		gateway.chain.disabled = true
 	}
