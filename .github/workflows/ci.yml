@@ -42,12 +42,17 @@ jobs:
         run: |
           go mod verify
           go mod tidy -diff
-          module_count="$(go list -m all | wc -l)"
-          if [ "$module_count" -ne 1 ]; then
-            printf 'External dependencies are not allowed in the L1 initialization:\n'
-            go list -m all
-            exit 1
-          fi
+          go list -m all
+          while IFS= read -r module; do
+            case "$module" in
+              github.com/modelcontextprotocol/go-sdk|go.yaml.in/yaml/v3|github.com/SivanCola/windows-sandbox|github.com/google/jsonschema-go|github.com/segmentio/asm|github.com/segmentio/encoding|github.com/yosida95/uritemplate/v3|github.com/golang-jwt/jwt/v5|github.com/google/go-cmp|cloud.google.com/go/compute/metadata|golang.org/x/oauth2|golang.org/x/sync|golang.org/x/sys|golang.org/x/time|golang.org/x/tools)
+                ;;
+              *)
+                printf 'Unapproved Go module: %s\n' "$module"
+                exit 1
+                ;;
+            esac
+          done < <(go list -m -f '{{.Path}}' all | tail -n +2)
       - name: Enforce CGO and L1 dependency boundaries
         shell: bash
         run: |
@@ -68,11 +73,23 @@ jobs:
   native-tests:
     name: Native tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # The floor is the coverage the platform can reach on a hosted runner.
+        # Linux and Windows enforce their backends there, so the floor sits at
+        # the measured value. The hosted macOS image cannot enforce a Seatbelt
+        # profile at all, so only the profile construction assertions run and the
+        # reachable floor is lower; on hardware that does enforce, the same gate
+        # still guards the runtime paths against regressions.
+        include:
+          - os: ubuntu-latest
+            sandbox_coverage_floor: "80"
+          - os: macos-latest
+            sandbox_coverage_floor: "70"
+          - os: windows-latest
+            sandbox_coverage_floor: "90"
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -81,14 +98,70 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Install bubblewrap
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap
+          bwrap --version
+      - name: Enable unprivileged user namespaces
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
+          sysctl kernel.unprivileged_userns_clone || true
+          cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns || true
+          if ! bwrap --unshare-user-try --ro-bind / / --dev /dev --proc /proc -- /bin/sh -c ':'; then
+            printf 'bwrap cannot create a user namespace on this runner\n'
+          fi
       - name: Test
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 ./...
+      - name: Test platform sandbox suites verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v -run 'Test(Windows|Linux|Darwin|SandboxBackend)' ./internal/engine/sandbox
+      - name: Require a working sandbox backend
+        if: runner.os != 'macOS'
+        env:
+          CGO_ENABLED: "0"
+          MARXAGENT_REQUIRE_SANDBOX: "1"
+        run: go test -count=1 -run TestSandboxBackendAvailability ./internal/engine/sandbox
+      - name: Report sandbox backend enforcement on macOS
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          if go test -count=1 -v -run TestSandboxBackendAvailability ./internal/engine/sandbox | tee /tmp/backend.log | grep -q -- '--- PASS'; then
+            printf 'seatbelt enforcement is active on this runner\n'
+          else
+            printf '::warning::sandbox-exec cannot enforce a profile on this runner; the Seatbelt runtime assertions were skipped and only profile construction is verified\n'
+            cat /tmp/backend.log
+          fi
       - name: Vet
         env:
           CGO_ENABLED: "0"
         run: go vet ./...
+      - name: Enforce sandbox coverage floor
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          go test -count=1 -coverprofile=sandbox-coverage.out ./internal/engine/sandbox
+          go tool cover -func=sandbox-coverage.out
+          coverage="$(go tool cover -func=sandbox-coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          floor="${{ matrix.sandbox_coverage_floor }}"
+          awk -v coverage="$coverage" -v floor="$floor" 'BEGIN { if (coverage + 0 < floor + 0) exit 1 }'
+      - name: Upload sandbox coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: sandbox-coverage-${{ matrix.os }}
+          path: sandbox-coverage.out
+          if-no-files-found: error
 
   cross-builds:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -137,6 +210,14 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      - name: Install bubblewrap
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends bubblewrap
+          bwrap --version
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0 || true
       - name: Run race detector
         env:
           CGO_ENABLED: "1"
