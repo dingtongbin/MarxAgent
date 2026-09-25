@@ -118,16 +118,14 @@ func newRecoveryScope(t *testing.T) (string, *AuditSink) {
 func TestRecoverReplaysAndIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	root, audit := newRecoveryScope(t)
-	journal := filepath.Join(root, "session-s1.jsonl")
-	records := []Record{
+	writeScopeJournal(t, root, "session:s1", []Record{
 		messageRecord(1, "m1", "user", "replayed needle"),
 		messageRecord(2, "m2", "assistant", "an answer"),
-	}
-	writeJournalRecords(t, journal, records)
+	})
 
 	// The journal ran ahead of the ledger, which is the normal journal first
 	// ordering, so recovery has to catch the ledger up.
-	if err := audit.WriteCheckpoint(ctx, "s1", 0, 0, ""); err != nil {
+	if err := audit.WriteCheckpoint(ctx, "session:s1", 0, 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Recover(ctx, root, audit)
@@ -154,7 +152,7 @@ func TestRecoverReplaysAndIsIdempotent(t *testing.T) {
 
 	// A second run must converge rather than duplicate, which is what makes it
 	// safe to run on every start that did not shut down cleanly.
-	if err := audit.WriteCheckpoint(ctx, "s1", 2, 2, ""); err != nil {
+	if err := audit.WriteCheckpoint(ctx, "session:s1", 2, 2, ""); err != nil {
 		t.Fatal(err)
 	}
 	second, err := Recover(ctx, root, audit)
@@ -179,8 +177,9 @@ func TestRecoverReplaysAndIsIdempotent(t *testing.T) {
 func TestRecoverTruncatesAHalfWrittenLine(t *testing.T) {
 	ctx := context.Background()
 	root, audit := newRecoveryScope(t)
-	journal := filepath.Join(root, "session-s1.jsonl")
-	writeJournalRecords(t, journal, []Record{messageRecord(1, "m1", "user", "first needle")})
+	journal := writeScopeJournal(t, root, "session:s1", []Record{
+		messageRecord(1, "m1", "user", "first needle"),
+	})
 	file, err := os.OpenFile(journal, os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -192,7 +191,7 @@ func TestRecoverTruncatesAHalfWrittenLine(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if err := audit.WriteCheckpoint(ctx, "s1", 1, 1, ""); err != nil {
+	if err := audit.WriteCheckpoint(ctx, "session:s1", 1, 1, ""); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Recover(ctx, root, audit)
@@ -240,12 +239,12 @@ func TestRecoverTruncatesAHalfWrittenLine(t *testing.T) {
 func TestRecoverReportsALedgerAheadOfTheJournal(t *testing.T) {
 	ctx := context.Background()
 	root, audit := newRecoveryScope(t)
-	writeJournalRecords(t, filepath.Join(root, "session-s1.jsonl"), []Record{
+	writeScopeJournal(t, root, "session:s1", []Record{
 		messageRecord(1, "m1", "user", "one"),
 	})
 	// The checkpoint claims far more than the journal holds, which means the
 	// journal lost data rather than merely stopping early.
-	if err := audit.WriteCheckpoint(ctx, "s1", 99, 99, ""); err != nil {
+	if err := audit.WriteCheckpoint(ctx, "session:s1", 99, 99, ""); err != nil {
 		t.Fatal(err)
 	}
 	result, err := Recover(ctx, root, audit)
@@ -280,7 +279,7 @@ func TestRecoverReportsALedgerAheadOfTheJournal(t *testing.T) {
 func TestRecoverFilesBrokerMessagesAsOrphans(t *testing.T) {
 	ctx := context.Background()
 	root, audit := newRecoveryScope(t)
-	writeJournalRecords(t, filepath.Join(root, "subagent-a1.jsonl"), []Record{
+	writeScopeJournal(t, root, "subagent:a1", []Record{
 		{Stream: "subagent:a1", Seq: 1, Type: RecordBrokerMessage,
 			Data: json.RawMessage(`{"id":"m1","to":"a2","content":"take this"}`)},
 		{Stream: "subagent:a1", Seq: 2, Type: RecordBrokerMessage,
@@ -307,7 +306,7 @@ func TestRecoverFilesBrokerMessagesAsOrphans(t *testing.T) {
 func TestRecoverSkipsUnusableRecords(t *testing.T) {
 	ctx := context.Background()
 	root, audit := newRecoveryScope(t)
-	writeJournalRecords(t, filepath.Join(root, "session-s1.jsonl"), []Record{
+	writeScopeJournal(t, root, "session:s1", []Record{
 		{Stream: "", Seq: 1, Type: RecordMessage, Data: json.RawMessage(`{}`)},
 		{Stream: "session:s1", Seq: 0, Type: "", Data: json.RawMessage(`{}`)},
 	})
@@ -341,9 +340,7 @@ func TestRecoverIgnoresUnrelatedFiles(t *testing.T) {
 	if len(result.Sessions) != 0 {
 		t.Fatalf("sessions = %#v", result.Sessions)
 	}
-	if err := os.WriteFile(filepath.Join(root, "session-s1.jsonl"), []byte("{}\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	writeScopeJournal(t, root, "session:s1", []Record{messageRecord(1, "m1", "user", "one")})
 	result, err = Recover(ctx, root, audit)
 	if err != nil {
 		t.Fatal(err)
@@ -357,6 +354,8 @@ func TestRecoverRejectsABadRoot(t *testing.T) {
 	if _, err := Recover(context.Background(), "  ", nil); err == nil {
 		t.Fatal("an empty root was accepted")
 	}
+	// A missing root is reported, unlike a missing journal file, because the
+	// root itself is not optional.
 	if _, err := Recover(context.Background(), filepath.Join(t.TempDir(), "absent"), nil); err == nil {
 		t.Fatal("a missing root was accepted")
 	}
@@ -365,7 +364,7 @@ func TestRecoverRejectsABadRoot(t *testing.T) {
 func TestRecoverRejectsANegativeSequence(t *testing.T) {
 	ctx := context.Background()
 	root, _ := newRecoveryScope(t)
-	writeJournalRecords(t, filepath.Join(root, "session-s1.jsonl"), []Record{
+	writeScopeJournal(t, root, "session:s1", []Record{
 		{Stream: "session:s1", Seq: -1, Type: RecordMessage, Data: json.RawMessage(`{}`)},
 	})
 	if _, err := Recover(ctx, root, nil); err == nil {

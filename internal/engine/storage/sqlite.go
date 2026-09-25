@@ -81,9 +81,28 @@ CREATE TABLE IF NOT EXISTS messages (
     ts         DATETIME NOT NULL,
     UNIQUE (session_id, message_id)
 );
+-- The index is external content over messages and is kept in step by triggers,
+-- so replaying a record updates one row instead of appending a second copy of
+-- it. Writing the index directly would make a recovery pass duplicate every
+-- search hit.
 CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    session_id, message_id, role, content, tokenize='trigram'
+    session_id, message_id, role, content,
+    content='messages', content_rowid='id', tokenize='trigram'
 );
+CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+    INSERT INTO messages_fts(rowid, session_id, message_id, role, content)
+    VALUES (new.id, new.session_id, new.message_id, new.role, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, session_id, message_id, role, content)
+    VALUES ('delete', old.id, old.session_id, old.message_id, old.role, old.content);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+    INSERT INTO messages_fts(messages_fts, rowid, session_id, message_id, role, content)
+    VALUES ('delete', old.id, old.session_id, old.message_id, old.role, old.content);
+    INSERT INTO messages_fts(rowid, session_id, message_id, role, content)
+    VALUES (new.id, new.session_id, new.message_id, new.role, new.content);
+END;
 `
 
 // OpenAudit opens or creates the audit database in WAL mode.
@@ -168,14 +187,6 @@ func (s *AuditSink) Write(ctx context.Context, batch []Record) error {
 	}
 	defer messageInsert.Close()
 
-	searchInsert, err := transaction.PrepareContext(ctx, `
-		INSERT INTO messages_fts(session_id, message_id, role, content)
-		VALUES(?, ?, ?, ?)`)
-	if err != nil {
-		return fmt.Errorf("storage: prepare search insert: %w", err)
-	}
-	defer searchInsert.Close()
-
 	toolInsert, err := transaction.PrepareContext(ctx, `
 		INSERT INTO tool_call_audit(stream, seq, status, tool_name, ts)
 		VALUES(?, ?, ?, ?, ?)
@@ -217,9 +228,8 @@ func (s *AuditSink) Write(ctx context.Context, batch []Record) error {
 			if _, err := messageInsert.ExecContext(ctx, sessionID, message.ID, message.Role, content, ts); err != nil {
 				return fmt.Errorf("storage: insert message: %w", err)
 			}
-			if _, err := searchInsert.ExecContext(ctx, sessionID, message.ID, message.Role, content); err != nil {
-				return fmt.Errorf("storage: index message: %w", err)
-			}
+			// The search index follows messages through a trigger, so a replayed
+			// record updates the existing row instead of adding a second one.
 		case RecordToolCallState:
 			var state struct {
 				ToolName string `json:"tool_name"`
@@ -365,12 +375,14 @@ func (s *AuditSink) HighestToolSeq(ctx context.Context, stream string) (int64, e
 	return seq.Int64, nil
 }
 
-// LastAppliedSeq reads the recovery checkpoint, which is a metadata pointer
-// rather than a snapshot because the journal is already the full record.
-func (s *AuditSink) LastAppliedSeq(ctx context.Context, sessionID string) (int64, error) {
+// LastAppliedSeq reads the recovery checkpoint. The key is a full stream, not a
+// session: a session has both a message stream and an event stream, and sharing
+// one sequence between them would make one stream skip records the other
+// already checkpointed.
+func (s *AuditSink) LastAppliedSeq(ctx context.Context, key string) (int64, error) {
 	var value sql.NullString
 	if err := s.db.QueryRowContext(ctx,
-		`SELECT value FROM meta WHERE key = ?`, "checkpoint:"+sessionID,
+		`SELECT value FROM meta WHERE key = ?`, "checkpoint:"+key,
 	).Scan(&value); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return 0, nil
@@ -387,8 +399,9 @@ func (s *AuditSink) LastAppliedSeq(ctx context.Context, sessionID string) (int64
 	return seq, nil
 }
 
-// WriteCheckpoint records how far a session has been replayed.
-func (s *AuditSink) WriteCheckpoint(ctx context.Context, sessionID string, seq int64, messageCount int, summary string) error {
+// WriteCheckpoint records how far a stream has been replayed. The key is a full
+// stream name.
+func (s *AuditSink) WriteCheckpoint(ctx context.Context, key string, seq int64, messageCount int, summary string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -400,9 +413,9 @@ func (s *AuditSink) WriteCheckpoint(ctx context.Context, sessionID string, seq i
 	}
 	defer func() { _ = transaction.Rollback() }()
 	entries := map[string]string{
-		"checkpoint:" + sessionID:          fmt.Sprint(seq),
-		"checkpoint_messages:" + sessionID: fmt.Sprint(messageCount),
-		"checkpoint_summary:" + sessionID:  summary,
+		"checkpoint:" + key:          fmt.Sprint(seq),
+		"checkpoint_messages:" + key: fmt.Sprint(messageCount),
+		"checkpoint_summary:" + key:  summary,
 	}
 	for key, value := range entries {
 		if _, err := transaction.ExecContext(ctx,
@@ -498,8 +511,9 @@ func (s *AuditSink) SetShutdownState(ctx context.Context, state string) error {
 	return nil
 }
 
-// Checkpoint reads the recorded checkpoint of a session.
-func (s *AuditSink) Checkpoint(ctx context.Context, sessionID string) (seq int64, messageCount int, summary string, err error) {
+// Checkpoint reads the recorded checkpoint of a stream. The key is a full
+// stream name.
+func (s *AuditSink) Checkpoint(ctx context.Context, key string) (seq int64, messageCount int, summary string, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
@@ -517,15 +531,15 @@ func (s *AuditSink) Checkpoint(ctx context.Context, sessionID string) (seq int64
 		}
 		return value.String, nil
 	}
-	seqValue, err := read("checkpoint:" + sessionID)
+	seqValue, err := read("checkpoint:" + key)
 	if err != nil {
 		return 0, 0, "", fmt.Errorf("storage: read checkpoint: %w", err)
 	}
-	countValue, err := read("checkpoint_messages:" + sessionID)
+	countValue, err := read("checkpoint_messages:" + key)
 	if err != nil {
 		return 0, 0, "", fmt.Errorf("storage: read checkpoint: %w", err)
 	}
-	summary, err = read("checkpoint_summary:" + sessionID)
+	summary, err = read("checkpoint_summary:" + key)
 	if err != nil {
 		return 0, 0, "", fmt.Errorf("storage: read checkpoint: %w", err)
 	}

@@ -25,9 +25,9 @@ const (
 	StreamBroker   = "broker"
 )
 
-// JournalFileName maps a stream onto its journal file name.
-func JournalFileName(stream string) (string, error) {
-	return journalFileName(stream)
+// JournalFileName maps a stream onto its file inside a scope root.
+func JournalFileName(root, stream string) (string, error) {
+	return journalPath(root, stream)
 }
 
 // JournalSink is the human readable half of the durability design: one JSON
@@ -170,42 +170,93 @@ func TruncatePartialJournal(path string, partial []byte) error {
 	return nil
 }
 
-// JournalPaths maps a stream name onto its journal file name. Streams are
-// grouped by prefix so a session and its events land in predictable files.
-func JournalPaths(root string, streams []string) (map[string]string, error) {
-	if strings.TrimSpace(root) == "" {
-		return nil, fmt.Errorf("storage: journal root must not be empty")
-	}
-	paths := make(map[string]string, len(streams))
-	for _, stream := range streams {
-		name, err := journalFileName(stream)
-		if err != nil {
-			return nil, err
-		}
-		paths[stream] = filepath.Join(root, name)
-	}
-	return paths, nil
-}
-
-func journalFileName(stream string) (string, error) {
+// journalPath maps a stream onto its file inside a scope, following the layout
+// the design specifies: session streams live in sessions/<id>/<kind>.jsonl and
+// the broker stream has its own directory.
+func journalPath(root, stream string) (string, error) {
 	kind, id, found := strings.Cut(stream, ":")
 	if !found || kind == "" || id == "" {
 		return "", fmt.Errorf("storage: stream %q must be <kind>:<id>", stream)
 	}
-	if strings.ContainsAny(id, `/\:`) {
-		return "", fmt.Errorf("storage: stream id %q contains a path separator", id)
+	if err := ValidateID("stream id", id); err != nil {
+		return "", err
 	}
-	return kind + "-" + id + ".jsonl", nil
+	if !knownStreamKind(kind) {
+		return "", fmt.Errorf("storage: unknown stream kind %q", kind)
+	}
+	if kind == StreamBroker {
+		return filepath.Join(root, BrokerDirName, BrokerJournalName+".jsonl"), nil
+	}
+	return filepath.Join(root, SessionsDirName, id, kind+".jsonl"), nil
 }
 
-// SortedStreams returns stream names in a stable order.
-func SortedStreams(streams map[string]string) []string {
-	names := make([]string, 0, len(streams))
-	for name := range streams {
-		names = append(names, name)
+func knownStreamKind(kind string) bool {
+	switch kind {
+	case StreamSession, StreamEvents, StreamSubAgent, StreamBroker, "recovery":
+		return true
+	default:
+		return false
 	}
-	sort.Strings(names)
-	return names
+}
+
+// journalFile is one discovered journal and the stream it holds.
+type journalFile struct {
+	path   string
+	stream string
+}
+
+// discoverJournals walks a scope and reports every journal it holds. The stream
+// comes from the layout, not from a guess: the file name gives the kind and the
+// containing directory gives the identifier, so an unrelated file in the scope
+// is never mistaken for a journal.
+func discoverJournals(root string) ([]journalFile, error) {
+	// A missing scope root is a caller error, while a missing journal file is
+	// the normal first run, so the root is checked before the walk starts.
+	if info, err := os.Stat(root); err != nil {
+		return nil, fmt.Errorf("storage: read scope root: %w", err)
+	} else if !info.IsDir() {
+		return nil, fmt.Errorf("storage: scope root %q is not a directory", root)
+	}
+	var found []journalFile
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			// A journal removed while the walk runs is not a failure; the next
+			// recovery pass will simply not see it.
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
+			return nil
+		}
+		kind := strings.TrimSuffix(entry.Name(), ".jsonl")
+		directory := filepath.Base(filepath.Dir(path))
+		id := directory
+		// A session or event journal is named after its kind. The broker journal
+		// is named journal.jsonl inside a broker directory instead, so the
+		// directory can carry the kind. The file name is tried first, which keeps
+		// a session whose identifier happens to be a stream kind classified by
+		// its own name.
+		if !knownStreamKind(kind) {
+			kind, id = directory, strings.TrimSuffix(entry.Name(), ".jsonl")
+		}
+		if !knownStreamKind(kind) {
+			return nil
+		}
+		if err := ValidateID("stream id", id); err != nil {
+			return nil
+		}
+		found = append(found, journalFile{path: path, stream: kind + ":" + id})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("storage: walk scope: %w", err)
+	}
+	sort.Slice(found, func(first, second int) bool {
+		return found[first].path < found[second].path
+	})
+	return found, nil
 }
 
 func trimLineEnd(line []byte) []byte {

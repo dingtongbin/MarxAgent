@@ -223,30 +223,92 @@ func TestJournalIgnoresAnEmptyBatch(t *testing.T) {
 	}
 }
 
-func TestJournalFileNamesAreSafe(t *testing.T) {
+func TestJournalPathsFollowTheScopeLayout(t *testing.T) {
 	root := t.TempDir()
-	streams := []string{"session:abc", "events:abc", "subagent:xyz"}
-	paths, err := JournalPaths(root, streams)
+	session, err := JournalFileName(root, "session:abc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Base(paths["session:abc"]) != "session-abc.jsonl" {
-		t.Fatalf("session path = %q", paths["session:abc"])
+	want := filepath.Join(root, "sessions", "abc", "session.jsonl")
+	if session != want {
+		t.Fatalf("session path = %q, want %q", session, want)
 	}
-	if filepath.Base(paths["events:abc"]) != "events-abc.jsonl" {
-		t.Fatalf("events path = %q", paths["events:abc"])
+	events, err := JournalFileName(root, "events:abc")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, err := JournalPaths("  ", streams); err == nil {
-		t.Fatal("an empty root was accepted")
+	if events != filepath.Join(root, "sessions", "abc", "events.jsonl") {
+		t.Fatalf("events path = %q", events)
 	}
-	for _, stream := range []string{"session", "session:", ":abc", "session:a/b", `session:a\b`, "session:a:b"} {
-		if _, err := JournalPaths(root, []string{stream}); err == nil {
+	broker, err := JournalFileName(root, "broker:journal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if broker != filepath.Join(root, "broker", "journal.jsonl") {
+		t.Fatalf("broker path = %q", broker)
+	}
+	for _, stream := range []string{
+		"session", "session:", ":abc", "session:a/b", `session:a\b`,
+		"session:a:b", "session:..", "session:.", "unknown:abc", "session:a\x00b",
+	} {
+		if _, err := JournalFileName(root, stream); err == nil {
 			t.Fatalf("stream %q was accepted", stream)
 		}
 	}
-	if got := SortedStreams(paths); len(got) != 3 || got[0] != "events:abc" {
-		t.Fatalf("sorted streams = %v", got)
+}
+
+func TestDiscoverJournalsIgnoresUnrelatedFiles(t *testing.T) {
+	root := t.TempDir()
+	writeScopeJournal(t, root, "session:abc", []Record{messageRecord(1, "m1", "user", "x")})
+	writeScopeJournal(t, root, "events:abc", []Record{messageRecord(1, "m1", "user", "x")})
+	for _, relative := range []string{
+		"notes.txt",
+		"index.json",
+		"no-separator.jsonl",
+		filepath.Join("sessions", "notes.txt"),
+		filepath.Join("sessions", "abc", "extra.jsonl"),
+	} {
+		path := filepath.Join(root, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{}"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
+	journals, err := discoverJournals(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(journals) != 2 {
+		t.Fatalf("journals = %#v", journals)
+	}
+	if journals[0].stream != "events:abc" || journals[1].stream != "session:abc" {
+		t.Fatalf("streams = %#v", journals)
+	}
+}
+
+// writeScopeJournal writes records to the journal of a stream in a scope root.
+func writeScopeJournal(t *testing.T, root, stream string, records []Record) string {
+	t.Helper()
+	path, err := journalPath(root, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sink, err := OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Write(context.Background(), records); err != nil {
+		t.Fatal(err)
+	}
+	if err := sink.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestJournalRoundTripsEveryRecordType(t *testing.T) {

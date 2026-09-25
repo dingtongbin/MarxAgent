@@ -158,10 +158,10 @@ func TestAuditReportsAClosedDatabase(t *testing.T) {
 	if err := audit.Write(ctx, []Record{messageRecord(1, "m1", "user", "x")}); err == nil {
 		t.Fatal("a write to a closed database was accepted")
 	}
-	if err := audit.WriteCheckpoint(ctx, "s1", 1, 1, "s"); err == nil {
+	if err := audit.WriteCheckpoint(ctx, "session:s1", 1, 1, "s"); err == nil {
 		t.Fatal("a checkpoint to a closed database was accepted")
 	}
-	if _, _, _, err := audit.Checkpoint(ctx, "s1"); err == nil {
+	if _, _, _, err := audit.Checkpoint(ctx, "session:s1"); err == nil {
 		t.Fatal("a checkpoint read from a closed database was accepted")
 	}
 	if _, err := audit.SearchMessages(ctx, "s1", "query", 1); err == nil {
@@ -173,7 +173,7 @@ func TestAuditReportsAClosedDatabase(t *testing.T) {
 	if _, err := audit.HighestToolSeq(ctx, "session:s1"); err == nil {
 		t.Fatal("a tool sequence read on a closed database was accepted")
 	}
-	if _, err := audit.LastAppliedSeq(ctx, "s1"); err == nil {
+	if _, err := audit.LastAppliedSeq(ctx, "session:s1"); err == nil {
 		t.Fatal("a checkpoint sequence read on a closed database was accepted")
 	}
 	if err := audit.Close(); err == nil {
@@ -192,17 +192,17 @@ func TestAuditRejectsUnreadableMetadata(t *testing.T) {
 		t.Fatal("a malformed schema version was accepted")
 	}
 	if _, err := audit.db.Exec(
-		`INSERT INTO meta(key, value) VALUES('checkpoint:s1', 'nope')`); err != nil {
+		`INSERT INTO meta(key, value) VALUES('checkpoint:session:s1', 'nope')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := audit.LastAppliedSeq(ctx, "s1"); err == nil {
+	if _, err := audit.LastAppliedSeq(ctx, "session:s1"); err == nil {
 		t.Fatal("a malformed checkpoint sequence was accepted")
 	}
 	if _, err := audit.db.Exec(
 		`INSERT INTO meta(key, value) VALUES('checkpoint_messages:s1', 'nope')`); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := audit.Checkpoint(ctx, "s1"); err == nil {
+	if _, _, _, err := audit.Checkpoint(ctx, "session:s1"); err == nil {
 		t.Fatal("a malformed checkpoint message count was accepted")
 	}
 }
@@ -286,7 +286,11 @@ func TestBufferRunFlushesPeriodically(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	go buffer.Run(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buffer.Run(ctx)
+	}()
 	if err := buffer.Append(message("session:a", "one")); err != nil {
 		t.Fatal(err)
 	}
@@ -302,6 +306,13 @@ func TestBufferRunFlushesPeriodically(t *testing.T) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	cancel()
+	// The loop has to be finished before the sink closes, or it would write to a
+	// closed journal after the assertions have already run.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the write buffer loop did not stop")
+	}
 	if err := buffer.Flush(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -314,6 +325,66 @@ func TestBufferRunFlushesPeriodically(t *testing.T) {
 	}
 	if len(records) != 1 || len(partial) != 0 {
 		t.Fatalf("records = %d partial = %q", len(records), partial)
+	}
+}
+
+func TestJournalPathAndDiscoveryValidateTheirInputs(t *testing.T) {
+	root := t.TempDir()
+	// The broker stream takes its kind from the directory, so its identifier
+	// still has to be a valid one.
+	if _, err := journalPath(root, "broker:../escape"); err == nil {
+		t.Fatal("a traversal reached the broker journal")
+	}
+	// A root that is not a directory is reported, because a caller that passed a
+	// file would otherwise get a scope that silently holds no journal.
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverJournals(file); err == nil {
+		t.Fatal("a file was walked as a scope root")
+	}
+}
+
+func TestTruncatePartialJournalReportsADirectory(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := TruncatePartialJournal(directory, []byte("x")); err == nil {
+		t.Fatal("a directory was truncated")
+	}
+}
+
+func TestSearchEventsBoundsItsLimit(t *testing.T) {
+	audit := newAudit(t)
+	if err := audit.Write(context.Background(), []Record{
+		messageRecord(1, "m1", "user", "bounded event"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	// Both ends of the range are clamped, so a caller cannot read the whole
+	// ledger by accident or ask for an unbounded result.
+	for _, limit := range []int{0, -1, 100000} {
+		results, err := audit.SearchEvents(context.Background(), "s1", "", limit)
+		if err != nil {
+			t.Fatalf("limit %d: %v", limit, err)
+		}
+		if len(results) != 1 {
+			t.Fatalf("limit %d returned %d", limit, len(results))
+		}
+	}
+	if err := audit.SetShutdownState(context.Background(), "clean"); err != nil {
+		t.Fatal(err)
+	}
+	if err := audit.db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := audit.SetShutdownState(context.Background(), "clean"); err == nil {
+		t.Fatal("a shutdown state was written to a closed database")
+	}
+	if err := audit.WriteCheckpoint(context.Background(), "session:s1", 1, 1, "x"); err == nil {
+		t.Fatal("a checkpoint was written to a closed database")
 	}
 }
 

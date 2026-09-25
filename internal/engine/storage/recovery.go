@@ -6,8 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -65,20 +63,13 @@ func Recover(ctx context.Context, root string, audit *AuditSink) (RecoveryResult
 	if strings.TrimSpace(root) == "" {
 		return result, fmt.Errorf("storage: recovery root must not be empty")
 	}
-	entries, err := os.ReadDir(root)
+	journals, err := discoverJournals(root)
 	if err != nil {
-		return result, fmt.Errorf("storage: read recovery root: %w", err)
+		return result, err
 	}
 	var actions []Record
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
-			continue
-		}
-		stream, valid := streamFromFileName(entry.Name())
-		if !valid {
-			continue
-		}
-		session, sessionActions, err := recoverStream(ctx, filepath.Join(root, entry.Name()), stream, audit)
+	for _, journal := range journals {
+		session, sessionActions, err := recoverStream(ctx, journal.path, journal.stream, audit)
 		if err != nil {
 			return result, err
 		}
@@ -114,7 +105,10 @@ func recoverStream(ctx context.Context, path, stream string, audit *AuditSink) (
 
 	var checkpoint int64
 	if audit != nil {
-		checkpoint, err = audit.LastAppliedSeq(ctx, streamID(stream))
+		// The checkpoint is per stream: a session's message stream and event
+		// stream advance independently, so sharing one sequence between them
+		// would make one of them skip records.
+		checkpoint, err = audit.LastAppliedSeq(ctx, stream)
 		if err != nil {
 			return outcome, nil, err
 		}
@@ -270,32 +264,11 @@ func recoveryAction(action string, detail map[string]any) Record {
 	}
 }
 
+// streamID reports the identifier part of a stream, which is what the message
+// and event streams of one session share.
 func streamID(stream string) string {
 	if _, id, found := strings.Cut(stream, ":"); found && id != "" {
 		return id
 	}
 	return stream
-}
-
-func streamFromFileName(name string) (string, bool) {
-	base := strings.TrimSuffix(name, ".jsonl")
-	kind, id, found := strings.Cut(base, "-")
-	if !found || kind == "" || id == "" {
-		return "", false
-	}
-	// The kind has to be one the pipeline actually writes. Without this a
-	// stray json file in the scope would be replayed as if it were a journal.
-	if !knownStreamKind(kind) {
-		return "", false
-	}
-	return kind + ":" + id, true
-}
-
-func knownStreamKind(kind string) bool {
-	switch kind {
-	case StreamSession, StreamEvents, StreamSubAgent, StreamBroker, "recovery":
-		return true
-	default:
-		return false
-	}
 }

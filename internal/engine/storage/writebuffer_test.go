@@ -175,9 +175,7 @@ func TestByteWatermarkTriggersAWrite(t *testing.T) {
 		WatermarkBytes:   200,
 		FlushPeriod:      time.Hour,
 	}, sink)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go buffer.Run(ctx)
+	runBuffer(t, buffer)
 	payload := json.RawMessage(`{"text":"` + strings.Repeat("x", 400) + `"}`)
 	for index := 0; index < 4; index++ {
 		if err := buffer.Append(Record{Stream: "s", Type: RecordMessage, Data: payload}); err != nil {
@@ -236,6 +234,27 @@ func TestFlushIsTheBoundaryTrigger(t *testing.T) {
 	if buffer.Queued() != 0 {
 		t.Fatalf("queued = %d", buffer.Queued())
 	}
+}
+
+// runBuffer starts the periodic loop and guarantees it has stopped before the
+// test returns. A loop that outlives its test would keep writing to state the
+// test has already torn down, which turns a clean failure into a mystery.
+func runBuffer(t *testing.T, buffer *WriteBuffer) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buffer.Run(ctx)
+	}()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("the write buffer loop did not stop")
+		}
+	})
 }
 
 func TestShutdownPerformsTheFallbackFlush(t *testing.T) {
@@ -544,9 +563,7 @@ func TestWriteBufferKeepsRecordOrderAcrossSinks(t *testing.T) {
 	journal := &memorySink{}
 	ledger := &memorySink{}
 	buffer := newTestBuffer(t, Config{WatermarkRecords: 3, FlushPeriod: time.Hour}, journal, ledger)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go buffer.Run(ctx)
+	runBuffer(t, buffer)
 	for index := 0; index < 9; index++ {
 		if err := buffer.Append(message("session:a", fmt.Sprintf("m%d", index))); err != nil {
 			t.Fatal(err)

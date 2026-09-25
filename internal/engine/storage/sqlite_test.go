@@ -148,30 +148,30 @@ func TestAuditToolCallStatesAreIdempotent(t *testing.T) {
 
 func TestAuditCheckpointsRoundTrip(t *testing.T) {
 	audit := newAudit(t)
-	seq, count, summary, err := audit.Checkpoint(context.Background(), "s1")
+	seq, count, summary, err := audit.Checkpoint(context.Background(), "session:s1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seq != 0 || count != 0 || summary != "" {
 		t.Fatalf("empty checkpoint = %d %d %q", seq, count, summary)
 	}
-	if err := audit.WriteCheckpoint(context.Background(), "s1", 42, 17, "a summary"); err != nil {
+	if err := audit.WriteCheckpoint(context.Background(), "session:s1", 42, 17, "a summary"); err != nil {
 		t.Fatal(err)
 	}
-	seq, count, summary, err = audit.Checkpoint(context.Background(), "s1")
+	seq, count, summary, err = audit.Checkpoint(context.Background(), "session:s1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if seq != 42 || count != 17 || summary != "a summary" {
 		t.Fatalf("checkpoint = %d %d %q", seq, count, summary)
 	}
-	if got, err := audit.LastAppliedSeq(context.Background(), "s1"); err != nil || got != 42 {
+	if got, err := audit.LastAppliedSeq(context.Background(), "session:s1"); err != nil || got != 42 {
 		t.Fatalf("last applied = %d err = %v", got, err)
 	}
-	if err := audit.WriteCheckpoint(context.Background(), "s1", 43, 18, "newer"); err != nil {
+	if err := audit.WriteCheckpoint(context.Background(), "session:s1", 43, 18, "newer"); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := audit.LastAppliedSeq(context.Background(), "s1"); err != nil || got != 43 {
+	if got, err := audit.LastAppliedSeq(context.Background(), "session:s1"); err != nil || got != 43 {
 		t.Fatalf("updated checkpoint = %d err = %v", got, err)
 	}
 }
@@ -280,9 +280,7 @@ func TestAuditWorksAsASecondSink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go buffer.Run(ctx)
+	runBuffer(t, buffer)
 	for index := 1; index <= 4; index++ {
 		if err := buffer.Append(messageRecord(int64(index), "m"+string(rune('0'+index)), "user",
 			"double write needle")); err != nil {
