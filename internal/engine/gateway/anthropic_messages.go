@@ -563,13 +563,22 @@ func (a *anthropicMessagesAdapter) parseStream(body io.Reader, yield func(core.S
 	emit(core.StreamChunk{Type: core.StreamTypeDone})
 }
 
+// recordUsage treats the reported counters as a cumulative snapshot. The format
+// repeats them in message_start and message_delta, and the later report is the
+// authoritative total, so the values are replaced rather than added.
 func (a *anthropicMessagesAdapter) recordUsage(usage anthropicUsage) {
 	a.mu.Lock()
-	a.usage = a.usage.Add(Usage{
-		InputTokens:      usage.InputTokens,
-		OutputTokens:     usage.OutputTokens,
-		CacheReadTokens:  usage.CacheReadInputTokens,
-		CacheWriteTokens: usage.CacheCreationInputTokens,
-	})
-	a.mu.Unlock()
+	defer a.mu.Unlock()
+	if usage.InputTokens > 0 {
+		a.usage.InputTokens = usage.InputTokens
+	}
+	if usage.OutputTokens > 0 {
+		a.usage.OutputTokens = usage.OutputTokens
+	}
+	if usage.CacheReadInputTokens > 0 {
+		a.usage.CacheReadTokens = usage.CacheReadInputTokens
+	}
+	if usage.CacheCreationInputTokens > 0 {
+		a.usage.CacheWriteTokens = usage.CacheCreationInputTokens
+	}
 }
