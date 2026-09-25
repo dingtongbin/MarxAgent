@@ -5,6 +5,7 @@ package sandbox
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -72,7 +73,7 @@ func TestDarwinProfileAndHelpers(t *testing.T) {
 
 func TestDarwinStartReportsMissingCommand(t *testing.T) {
 	if !platformAvailable() {
-		t.Skip("sandbox-exec is unavailable")
+		t.Skip("sandbox-exec is unavailable or refuses to apply a profile on this host")
 	}
 	engine := &Engine{policy: normalizedPolicy{timeout: time.Second, subprocess: true, network: true}}
 	if _, err := startPlatform(context.Background(), engine, []string{"missing-marxagent-command"}, nil, t.TempDir()); err == nil {
@@ -82,11 +83,14 @@ func TestDarwinStartReportsMissingCommand(t *testing.T) {
 
 func TestDarwinSeatbeltBackend(t *testing.T) {
 	if !platformAvailable() {
-		t.Skip("sandbox-exec is unavailable")
+		t.Skip("sandbox-exec is unavailable or refuses to apply a profile on this host")
 	}
 	root := t.TempDir()
 	engine, err := New(Policy{Workspace: root, WorkspaceWritable: true, Network: true, Subprocess: true, Timeout: 30 * time.Second})
 	if err != nil {
+		if errors.Is(err, ErrUnsupported) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	var output, errorOutput strings.Builder

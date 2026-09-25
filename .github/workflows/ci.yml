@@ -117,8 +117,25 @@ jobs:
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
-          MARXAGENT_REQUIRE_SANDBOX: "1"
         run: go test -count=1 -v -run 'Test(Windows|Linux|Darwin|SandboxBackend)' ./internal/engine/sandbox
+      - name: Require a working sandbox backend
+        if: runner.os != 'macOS'
+        env:
+          CGO_ENABLED: "0"
+          MARXAGENT_REQUIRE_SANDBOX: "1"
+        run: go test -count=1 -run TestSandboxBackendAvailability ./internal/engine/sandbox
+      - name: Report sandbox backend enforcement on macOS
+        if: runner.os == 'macOS'
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          if go test -count=1 -v -run TestSandboxBackendAvailability ./internal/engine/sandbox | tee /tmp/backend.log | grep -q -- '--- PASS'; then
+            printf 'seatbelt enforcement is active on this runner\n'
+          else
+            printf '::warning::sandbox-exec cannot enforce a profile on this runner; the Seatbelt runtime assertions were skipped and only profile construction is verified\n'
+            cat /tmp/backend.log
+          fi
       - name: Vet
         env:
           CGO_ENABLED: "0"

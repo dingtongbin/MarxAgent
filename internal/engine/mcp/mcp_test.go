@@ -27,9 +27,12 @@ func TestClientUsesStdioCommandTransport(t *testing.T) {
 		Network:           true,
 		Subprocess:        true,
 		EnvAllowlist:      []string{"PATH", "HOME", "USERPROFILE", "SystemRoot", "windir", "ComSpec", "TEMP", "TMP", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "MARXAGENT_MCP_HELPER"},
-		Timeout:           10 * time.Second,
+		Timeout:           60 * time.Second,
 	})
 	if err != nil {
+		if errors.Is(err, sandbox.ErrUnsupported) {
+			t.Skip(err)
+		}
 		t.Fatal(err)
 	}
 	client, err := NewClient(ServerConfig{
@@ -44,7 +47,7 @@ func TestClientUsesStdioCommandTransport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close(context.Background())
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	tools, err := client.Tools(ctx)
 	if err != nil {

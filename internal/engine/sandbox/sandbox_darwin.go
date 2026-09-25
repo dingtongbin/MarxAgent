@@ -6,10 +6,12 @@ package sandbox
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func platformName() string {
@@ -18,7 +20,33 @@ func platformName() string {
 
 func platformAvailable() bool {
 	path, err := exec.LookPath("sandbox-exec")
-	return err == nil && trustedBackendPath(path)
+	if err != nil || !trustedBackendPath(path) {
+		return false
+	}
+	return probeSeatbelt(path)
+}
+
+// probeSeatbelt verifies that the host can actually apply a profile. The
+// sandbox-exec shim is deprecated and newer systems abort instead of enforcing,
+// so an installed binary is not evidence that commands are being isolated.
+func probeSeatbelt(path string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	profile := "(version 1)\n(deny default)\n(allow file-read-metadata)\n(allow file-read*)\n" +
+		"(allow process-fork)\n(allow process-exec*)\n(allow signal)\n(allow sysctl-read)\n(allow mach-lookup)\n"
+	for _, candidate := range []string{"/usr/bin/true", "/bin/true", "/usr/bin/printf", "/bin/echo"} {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		command := exec.CommandContext(ctx, path, "-p", profile, candidate)
+		command.Stdout = io.Discard
+		command.Stderr = io.Discard
+		if command.Run() == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func platformCapabilities() Capabilities {
