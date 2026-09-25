@@ -123,9 +123,21 @@ func buildBwrapArgs(engine *Engine, executable string, argv []string, tempRoot, 
 			args = append(args, "--setenv", key, value)
 		}
 	}
-	args = append(args, "--tmpfs", "/tmp", "--dev", "/dev", "--proc", "/proc", "--bind", tempRoot, tempRoot)
+	args = append(args, "--dev", "/dev", "--proc", "/proc")
+	// The scratch directory always lives under the host temporary directory, so
+	// a fresh tmpfs over that directory would hide every host path exposed
+	// below, including the workspace and the executable itself. Bind the
+	// temporary directory read-only instead whenever anything we must expose
+	// lives inside it, and keep the scratch directory writable.
+	tempDir := canonicalPath(os.TempDir())
+	args = append(args, tempDirFlags(engine, executable, dir, tempDir)...)
+	args = append(args, "--bind", tempRoot, tempRoot)
+	args = append(args, "--setenv", "TMPDIR", tempRoot, "--setenv", "TMP", tempRoot, "--setenv", "TEMP", tempRoot)
 	seen := make(map[string]struct{})
 	appendBind := func(flag, path string, required bool) error {
+		if path == "" {
+			return nil
+		}
 		if _, ok := seen[path]; ok {
 			return nil
 		}
@@ -181,6 +193,25 @@ func buildBwrapArgs(engine *Engine, executable string, argv []string, tempRoot, 
 	args = append(args, "--", executable)
 	args = append(args, argv[1:]...)
 	return args, nil
+}
+
+// tempDirFlags decides how the host temporary directory is exposed. A private
+// tmpfs is the stronger default, but it is only usable when no path that must
+// stay visible lives underneath it.
+func tempDirFlags(engine *Engine, executable, dir, tempDir string) []string {
+	exposed := []string{executable, dir}
+	exposed = append(exposed, engine.policy.workspace)
+	exposed = append(exposed, engine.policy.writableRoots...)
+	exposed = append(exposed, engine.policy.readOnlyRoots...)
+	for _, path := range exposed {
+		if path == "" {
+			continue
+		}
+		if pathWithin(tempDir, canonicalPath(path)) {
+			return []string{"--ro-bind", tempDir, tempDir}
+		}
+	}
+	return []string{"--tmpfs", tempDir}
 }
 
 func trustedBackendPath(path string) bool {

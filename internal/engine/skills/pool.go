@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"unicode"
 	"unicode/utf8"
 )
@@ -242,7 +243,7 @@ func (p *Pool) ReadResource(ctx context.Context, name, relative string) ([]byte,
 	}
 	data, err := p.readFile(ctx, path)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 			return nil, fmt.Errorf("%w: %s", ErrResourceNotFound, relative)
 		}
 		return nil, err

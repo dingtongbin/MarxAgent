@@ -127,6 +127,7 @@ func (e *Engine) Start(ctx context.Context, argv []string, env []string, dir str
 	if !e.policy.allowsPath(dir) {
 		return nil, fmt.Errorf("%w: working directory is outside the policy", ErrInvalidPolicy)
 	}
+	dir = canonicalPath(dir)
 	runContext := ctx
 	cancel := func() {}
 	if e.policy.timeout > 0 {
@@ -143,7 +144,7 @@ func (e *Engine) Start(ctx context.Context, argv []string, env []string, dir str
 }
 
 func (p normalizedPolicy) allowsPath(path string) bool {
-	path = filepath.Clean(path)
+	path = canonicalPath(path)
 	if p.workspace != "" && pathWithin(p.workspace, path) {
 		return true
 	}
@@ -289,6 +290,18 @@ func addRoot(roots []string, root string) []string {
 	result := append(roots, root)
 	sort.Strings(result)
 	return result
+}
+
+// canonicalPath resolves a caller supplied path to the same form the policy
+// roots were normalized to. Without it a caller that passes "/tmp/work" is
+// rejected on macOS, where the real path is "/private/tmp/work", and Windows
+// callers that pass 8.3 short names are rejected after expansion.
+func canonicalPath(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return clean
 }
 
 func normalizeEnvAllowlist(values []string) []string {

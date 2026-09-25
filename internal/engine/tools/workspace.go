@@ -166,11 +166,23 @@ func (w *Workspace) candidate(path string) (string, error) {
 	if !filepath.IsAbs(candidate) {
 		candidate = filepath.Join(w.root, candidate)
 	}
-	candidate = filepath.Clean(candidate)
+	candidate = canonicalPath(candidate)
 	if !pathWithin(w.root, candidate) {
 		return "", fmt.Errorf("tools: path %q escapes workspace", path)
 	}
 	return candidate, nil
+}
+
+// canonicalPath resolves symlinks so a caller supplied path compares equal to
+// the resolved workspace root. macOS reports "/tmp/..." as "/private/tmp/..."
+// and Windows expands 8.3 short names, both of which would otherwise look like
+// workspace escapes.
+func canonicalPath(path string) string {
+	clean := filepath.Clean(path)
+	if resolved, err := filepath.EvalSymlinks(clean); err == nil {
+		return filepath.Clean(resolved)
+	}
+	return clean
 }
 
 func (w *Workspace) checkWriteParents(parent string) error {

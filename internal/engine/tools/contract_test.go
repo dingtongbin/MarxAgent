@@ -236,7 +236,7 @@ func TestWorkspacePathResolutionErrors(t *testing.T) {
 	if err := workspace.writeFile(context.Background(), "../escape.txt", nil); err == nil {
 		t.Fatal("escaping write accepted")
 	}
-	if got := workspace.relative(filepath.Join(root, "dir", "x.txt")); got != "dir/x.txt" {
+	if got := workspace.relative(filepath.Join(workspace.Root(), "dir", "x.txt")); got != "dir/x.txt" {
 		t.Fatalf("relative = %q", got)
 	}
 	if got := mustJoin(root, "a.txt"); got != filepath.Join(root, "a.txt") {
@@ -253,7 +253,7 @@ func TestWorkspaceWriteReplacesExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	target := filepath.Join(root, "script.sh")
+	target := filepath.Join(workspace.Root(), "script.sh")
 	if err := os.WriteFile(target, []byte("echo one"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -267,7 +267,7 @@ func TestWorkspaceWriteReplacesExistingFile(t *testing.T) {
 	if string(data) != "echo two" {
 		t.Fatalf("content = %q", data)
 	}
-	fresh := filepath.Join(root, "nested", "created.txt")
+	fresh := filepath.Join(workspace.Root(), "nested", "created.txt")
 	if err := workspace.writeFile(context.Background(), fresh, []byte("new")); err != nil {
 		t.Fatal(err)
 	}

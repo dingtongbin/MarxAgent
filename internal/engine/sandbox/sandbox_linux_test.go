@@ -22,13 +22,29 @@ func TestLinuxBubblewrapBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var output strings.Builder
-	result, err := Run(context.Background(), engine, []string{"/bin/sh", "-c", "printf sandbox-ok"}, nil, root, nil, &output, nil)
+	var output, errorOutput strings.Builder
+	result, err := Run(context.Background(), engine, []string{"/bin/sh", "-c", "printf sandbox-ok"}, nil, root, nil, &output, &errorOutput)
+	skipIfKernelDeniesSandbox(t, errorOutput.String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if result.ExitCode != 0 || output.String() != "sandbox-ok" {
-		t.Fatalf("result = %#v output = %q", result, output.String())
+		t.Fatalf("result = %#v output = %q stderr = %q", result, output.String(), errorOutput.String())
+	}
+	if !pathWithin(engine.Policy().Workspace, root) {
+		t.Fatalf("workspace %q does not contain %q", engine.Policy().Workspace, root)
+	}
+}
+
+// skipIfKernelDeniesSandbox keeps host policy restrictions from masquerading as
+// implementation bugs. Unprivileged user namespaces are blocked on some CI
+// images, and no amount of argument fixing can work around that.
+func skipIfKernelDeniesSandbox(t *testing.T, stderr string) {
+	t.Helper()
+	for _, marker := range []string{"No permissions to creating new namespace", "Operation not permitted", "permission denied", "unprivileged userns"} {
+		if strings.Contains(stderr, marker) {
+			t.Skipf("the kernel or host policy denies sandbox namespaces: %s", strings.TrimSpace(stderr))
+		}
 	}
 }
 
@@ -148,7 +164,9 @@ func TestLinuxBubblewrapHidesForbiddenRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Run(context.Background(), engine, []string{"/bin/sh", "-c", "cat " + secret}, nil, root, nil, nil, nil)
+	var errorOutput strings.Builder
+	_, err = Run(context.Background(), engine, []string{"/bin/sh", "-c", "cat " + secret}, nil, root, nil, nil, &errorOutput)
+	skipIfKernelDeniesSandbox(t, errorOutput.String())
 	if err == nil {
 		t.Fatal("forbidden file was readable")
 	}

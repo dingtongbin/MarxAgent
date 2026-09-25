@@ -89,7 +89,7 @@ func TestUnrestrictedRunnerCancelsAndReportsStartErrors(t *testing.T) {
 	}
 	canceled, cancelNow := context.WithCancel(context.Background())
 	cancelNow()
-	if _, err := engine.Start(canceled, []string{"cmd"}, nil, ""); !errors.Is(err, context.Canceled) {
+	if _, err := engine.Start(canceled, []string{os.Args[0]}, nil, ""); !errors.Is(err, context.Canceled) {
 		t.Fatalf("canceled start error = %v", err)
 	}
 	if _, err := engine.Start(context.Background(), nil, nil, ""); !errors.Is(err, ErrInvalidPolicy) {
@@ -318,14 +318,19 @@ func TestStartSurfacesPlatformStartFailure(t *testing.T) {
 
 func TestNewSurfacesPlatformPolicyRejection(t *testing.T) {
 	root := t.TempDir()
-	if _, err := New(Policy{Workspace: root, Subprocess: true}); !errors.Is(err, ErrInvalidPolicy) {
-		t.Fatalf("platform policy rejection error = %v", err)
-	}
 	if _, err := New(Policy{Workspace: root, AllowLoopback: true, Subprocess: true, Timeout: time.Second}); !errors.Is(err, ErrInvalidPolicy) {
 		t.Fatalf("loopback without network error = %v", err)
 	}
 	if _, err := New(Policy{Workspace: root, Subprocess: true, Timeout: -time.Second}); !errors.Is(err, ErrInvalidPolicy) {
 		t.Fatalf("negative timeout error = %v", err)
+	}
+	// Only the AppContainer backend needs a positive timeout and an offline
+	// writable sandbox; the Unix backends accept the same policy.
+	if platformName() != "windows-appcontainer" {
+		return
+	}
+	if _, err := New(Policy{Workspace: root, Subprocess: true}); !errors.Is(err, ErrInvalidPolicy) {
+		t.Fatalf("platform policy rejection error = %v", err)
 	}
 }
 
