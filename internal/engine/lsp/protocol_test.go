@@ -743,6 +743,7 @@ func TestRestartSpendsTheBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	watchCrashes(t, client)
 	defer client.Close()
 	ctx := context.Background()
 	// A caller looping on Restart is the same problem as a crash loop, so the bound
@@ -797,6 +798,7 @@ func TestTheClientAnswersAServerRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	watchCrashes(t, client)
 	defer client.Close()
 	answered := make(chan struct{})
 	var once bool
