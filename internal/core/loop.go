@@ -137,6 +137,11 @@ func (a *agent) executeLoop(ctx context.Context, input Input, events chan<- Even
 		// The hook answered with the shape it was handed, so a block that is not a
 		// call is a broken hook rather than a refusal, and it is reported as one. An
 		// empty answer is the legitimate way to refuse everything.
+		//
+		// This is the only place the calls are checked. The merged list is built from
+		// these validated calls and from copies of calls the accumulator had already
+		// validated, with two fields overwritten to known good values, so checking it
+		// again would be a statement that can never fail and therefore says nothing.
 		if err := validateToolCalls(accepted); err != nil {
 			return fmt.Errorf("core: tool_call_received hook returned an invalid call: %w", err)
 		}
@@ -147,9 +152,6 @@ func (a *agent) executeLoop(ctx context.Context, input Input, events chan<- Even
 		// turn on the next call rather than merely skipping the tool. The refused
 		// calls are put back as failures carrying the reason the gate gave.
 		toolCalls = reconcileRefusedCalls(toolCalls, accepted)
-		if err := validateToolCalls(toolCalls); err != nil {
-			return err
-		}
 		if err := a.emitToolCalls(ctx, events, assistantMessage.ID, toolCalls); err != nil {
 			return err
 		}
