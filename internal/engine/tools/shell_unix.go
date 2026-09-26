@@ -5,23 +5,22 @@ package tools
 
 import (
 	"fmt"
-	"os"
+
+	"github.com/dingtongbin/MarxAgent/internal/engine/platform"
 )
 
+// shellArgs runs a script with the shell this host prefers.
+//
+// Which shell that is, and why, is the platform package's business; all this decides
+// is that a shell the caller named wins, and that a host with no shell at all is
+// reported rather than run with an empty command.
 func shellArgs(config ShellConfig, script string) ([]string, error) {
-	shell := config.Shell
-	if shell == "" {
-		if _, err := os.Stat("/bin/bash"); err == nil {
-			shell = "/bin/bash"
-		} else {
-			shell = os.Getenv("SHELL")
-			if shell == "" {
-				shell = "/bin/sh"
-			}
-		}
+	choice := platform.DefaultShell()
+	if config.Shell != "" {
+		choice = platform.ShellChoice{Path: config.Shell, Interactive: true}
 	}
-	if shell == "" {
-		return nil, fmt.Errorf("tools: shell executable is empty")
+	if !choice.Usable() {
+		return nil, fmt.Errorf("tools: no shell to run the script with: %w", choice.Reason())
 	}
-	return []string{shell, "-lc", script}, nil
+	return choice.Args(script), nil
 }
