@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -29,16 +30,32 @@ type fakeServer struct {
 	capabilities ServerCapabilities
 	// handler answers a request, returning the raw result.
 	handler func(method string, params json.RawMessage) (json.RawMessage, *ResponseError)
-	// failAfter makes the server stop after a number of messages, which is how a
-	// crash is simulated.
-	failAfter int
+	// crashBefore is the method whose arrival kills the server without an answer,
+	// which is how a crash is simulated.
+	//
+	// The crash is named rather than counted. A count of messages leaves the test
+	// at the mercy of how many messages the handshake happens to send, and the
+	// handshake is two of them, so a count set to crash after the second message
+	// dies in the middle of the handshake on any run where the client sends one
+	// more. The initialize request is the one request the client never retries, so a
+	// server that dies there fails the turn outright, and the failure would be
+	// reported against whichever test the scheduler happened to be in.
+	crashBefore string
 	// silent makes the server read everything and answer nothing, which is what a
 	// hung language server looks like.
 	silent bool
+	// state guards what the serving goroutine writes and the test reads.
+	stateMu sync.Mutex
 	// served counts the messages handled.
 	served int
+	// stopCloses is closed to bring the serving goroutine out of its read.
+	stopCloses chan struct{}
+	// stopped guards against closing twice.
+	stopped bool
 	// output is the server's end of the stream, closed when the server stops.
-	output   io.WriteCloser
+	output io.WriteCloser
+	// input is the server's read end, closed to bring a blocked read out of it.
+	input    io.ReadCloser
 	outputMu sync.Mutex
 	// finished is closed when the loop stops.
 	finished chan struct{}
@@ -55,12 +72,39 @@ func newFakeServer(t *testing.T) *fakeServer {
 			ReferencesProvider: boolPtr(true),
 			RenameProvider:     boolPtr(true),
 		},
-		finished: make(chan struct{}),
-		toClient: make(chan Message, 16),
+		stopCloses: make(chan struct{}),
+		finished:   make(chan struct{}),
+		toClient:   make(chan Message, 16),
 	}
 }
 
 func boolPtr(value bool) *bool { return &value }
+
+// stop brings the serving goroutine out of its read and waits for it to finish.
+//
+// A server left running would hold a goroutine blocked on a pipe and four file
+// descriptors past the end of its test, and a goroutine that outlives the test it
+// belongs to is how one test breaks another: the failure is reported against
+// whatever the scheduler was running at the time, which is why the same defect
+// shows up as a different test on every run.
+func (s *fakeServer) stop() {
+	s.stateMu.Lock()
+	if s.stopped {
+		s.stateMu.Unlock()
+		return
+	}
+	s.stopped = true
+	s.stateMu.Unlock()
+	close(s.stopCloses)
+	<-s.finished
+}
+
+// handled reports how many messages the server has handled.
+func (s *fakeServer) handled() int {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	return s.served
+}
 
 // attach connects the fake server to a pair of streams.
 //
@@ -71,13 +115,24 @@ func boolPtr(value bool) *bool { return &value }
 func (s *fakeServer) attach(clientToServer io.ReadCloser, serverToClient io.WriteCloser) {
 	s.reader = NewReader(clientToServer)
 	s.writer = NewWriter(serverToClient)
-	s.outputMu.Lock()
+	// The stream is kept so a stopped server can close it. A read that is already
+	// blocked comes out only when its end is closed, and a server waiting on a
+	// client that will never write again is a goroutine that never ends.
+	s.stateMu.Lock()
+	s.input = clientToServer
 	s.output = serverToClient
-	s.outputMu.Unlock()
+	s.stateMu.Unlock()
 	go s.serve()
 	go func() {
-		for message := range s.toClient {
-			if err := s.writer.Write(message); err != nil {
+		for {
+			select {
+			case message := <-s.toClient:
+				if err := s.writer.Write(message); err != nil {
+					return
+				}
+			case <-s.stopCloses:
+				// The server is stopping, so the pump has nothing left to deliver
+				// and must not hold a message the test is waiting to send.
 				return
 			}
 		}
@@ -95,22 +150,38 @@ func (s *fakeServer) serve() {
 			_ = s.closeOutput()
 		}
 	}()
+	go func() {
+		// Closing the client's end of the stream is the only way to bring a read
+		// that is already blocked out of it, so a stopped server unblocks itself
+		// rather than waiting for a client that may never write again.
+		<-s.stopCloses
+		s.stateMu.Lock()
+		input := s.input
+		s.stateMu.Unlock()
+		if input != nil {
+			_ = input.Close()
+		}
+	}()
 	for {
 		message, err := s.reader.Read()
 		if err != nil {
 			return
 		}
+		s.stateMu.Lock()
 		s.served++
-		if s.failAfter > 0 && s.served > s.failAfter {
+		s.requests = append(s.requests, message)
+		crashBefore := s.crashBefore
+		s.stateMu.Unlock()
+		if crashBefore != "" && message.Method == crashBefore {
 			// A server that stops answering is what a crash looks like from the
-			// client's side: the stream ends and no response ever arrives.
+			// client's side: the stream ends and no response ever arrives. The
+			// handshake is never the crash point, because a client cannot recover
+			// from a server that dies before it has ever spoken to it.
 			return
 		}
 		if message.IsNotification() {
-			s.requests = append(s.requests, message)
 			continue
 		}
-		s.requests = append(s.requests, message)
 		if s.silent {
 			// The request is read and deliberately not answered.
 			continue
@@ -178,6 +249,8 @@ func (s *fakeServer) send(message Message) {
 
 // methodsHandled reports which methods the server saw.
 func (s *fakeServer) methodsHandled() []string {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 	names := make([]string, 0, len(s.requests))
 	for _, request := range s.requests {
 		if request.Method != "" {
@@ -190,13 +263,46 @@ func (s *fakeServer) methodsHandled() []string {
 // workingStarter hands out a process with a healthy server attached. Every launch
 // gets its own server, because a server shared between a launch and the one that
 // replaced it is how a test ends up measuring the harness rather than the client.
+//
+// Every server it creates is stopped when the test ends, whether or not the test
+// closed its client. A server that is left running keeps a goroutine blocked on a
+// pipe and four descriptors open, and the failure it eventually causes is
+// reported against an unrelated test.
 func workingStarter(t *testing.T) *pipeStarter {
 	starter := &pipeStarter{}
-	starter.onLaunch = func(process *pipeProcess) {
+	starter.track(t, func(process *pipeProcess) *fakeServer {
 		server := newFakeServer(t)
-		server.attach(io.NopCloser(process.server), process.client)
-	}
+		server.attach(process.server, process.client)
+		return server
+	})
 	return starter
+}
+
+// pipeStarter records the servers it hands out so the test can stop them.
+//
+// A server is stopped on the way out because a test that only closes its client
+// when it remembers to is a test that leaks, and the leak is invisible until a
+// later test on a busier machine fails instead.
+type serverFactory func(process *pipeProcess) *fakeServer
+
+func (s *pipeStarter) track(t *testing.T, build serverFactory) {
+	var mu sync.Mutex
+	var servers []*fakeServer
+	t.Cleanup(func() {
+		mu.Lock()
+		held := servers
+		servers = nil
+		mu.Unlock()
+		for _, server := range held {
+			server.stop()
+		}
+	})
+	s.onLaunch = func(process *pipeProcess) {
+		server := build(process)
+		mu.Lock()
+		servers = append(servers, server)
+		mu.Unlock()
+	}
 }
 
 // pipeProcess is a sandbox.Process backed by in-memory pipes.
@@ -353,11 +459,12 @@ func TestTheServerIsNotStartedUntilItIsNeeded(t *testing.T) {
 func TestHandshakeAndRequests(t *testing.T) {
 	server := newFakeServer(t)
 	starter := &pipeStarter{}
-	starter.onLaunch = func(process *pipeProcess) {
+	starter.track(t, func(process *pipeProcess) *fakeServer {
 		// The server reads what the client writes and writes back on the other
 		// direction.
-		server.attach(io.NopCloser(process.server), process.client)
-	}
+		server.attach(process.server, process.client)
+		return server
+	})
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
 		RequestTimeout: 2 * time.Second, RestartBackoff: time.Millisecond,
@@ -424,7 +531,7 @@ func TestAServerResponseErrorIsReported(t *testing.T) {
 		return nil, &ResponseError{Code: CodeInternalError, Message: "the index is not built"}
 	}
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{Command: []string{"gopls"}, Workspace: "/project", Starter: starter})
 	if err != nil {
@@ -446,20 +553,22 @@ func TestACrashedServerComesBackWithinItsBound(t *testing.T) {
 	var mu sync.Mutex
 	launches := 0
 	starter := &pipeStarter{}
-	starter.onLaunch = func(process *pipeProcess) {
+	starter.track(t, func(process *pipeProcess) *fakeServer {
 		server := newFakeServer(t)
 		mu.Lock()
 		launches++
 		first := launches == 1
 		mu.Unlock()
-		// Only the first server dies. A server that died on every launch would make
-		// the second question unanswerable, and the test would be measuring an
-		// impossible server rather than the restart.
+		// Only the first server dies, and it dies when the first real question
+		// arrives rather than after a count of messages. A count would put the
+		// crash a fixed distance from the handshake, and the handshake is two
+		// messages, so the margin would be zero on any run that sent one more.
 		if first {
-			server.failAfter = 2
+			server.crashBefore = MethodTextDocumentHover
 		}
-		server.attach(io.NopCloser(process.server), process.client)
-	}
+		server.attach(process.server, process.client)
+		return server
+	})
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
 		RequestTimeout: 200 * time.Millisecond, MaxRestarts: 2, RestartBackoff: time.Millisecond,
@@ -532,7 +641,7 @@ func TestARequestIsAbandonedWhenTheServerGoesAway(t *testing.T) {
 	silent := newFakeServer(t)
 	silent.silent = true
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-		silent.attach(io.NopCloser(process.server), process.client)
+		silent.attach(process.server, process.client)
 	}}
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
@@ -596,7 +705,7 @@ func TestRestartSpendsTheBound(t *testing.T) {
 			return
 		}
 		server := newFakeServer(t)
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
@@ -651,7 +760,7 @@ func TestACancelledRequestIsGivenUpOn(t *testing.T) {
 func TestTheClientAnswersAServerRequest(t *testing.T) {
 	server := newFakeServer(t)
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
@@ -693,7 +802,7 @@ func TestAPanickingHandlerStillAnswers(t *testing.T) {
 	// produce one.
 	server := newFakeServer(t)
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
@@ -725,7 +834,7 @@ func TestAPanickingHandlerStillAnswers(t *testing.T) {
 func TestAnUnhandledServerRequestIsRefusedNotDropped(t *testing.T) {
 	server := newFakeServer(t)
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{
 		Command: []string{"gopls"}, Workspace: "/project", Starter: starter,
@@ -971,4 +1080,40 @@ func TestHandlerFuncAdaptsAFunction(t *testing.T) {
 	if !called {
 		t.Fatal("the function did not run")
 	}
+}
+
+// A server that outlives its test keeps a goroutine blocked on a pipe and four
+// descriptors open, and the failure it eventually causes lands on an unrelated
+// test. This asserts the harness does not leak, because that is the defect the
+// suite cannot otherwise see: a leak shows up as a different test failing on a
+// busier machine, never as the test that caused it.
+func TestTheHarnessLeaksNothingWhenATestEnds(t *testing.T) {
+	before := runtime.NumGoroutine()
+	// A cleanup registered on a subtest runs when the subtest returns, so the
+	// servers are stopped inside the round rather than at the end of the suite.
+	for round := 0; round < 5; round++ {
+		t.Run("round", func(t *testing.T) {
+			starter := workingStarter(t)
+			client, err := New(Config{
+				Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err != nil {
+				t.Fatal(err)
+			}
+			// The client is deliberately not closed, so only the starter's own
+			// cleanup can stop the server.
+		})
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if runtime.NumGoroutine() <= before+2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("goroutines went from %d to %d across five rounds; the servers are not being stopped",
+		before, runtime.NumGoroutine())
 }

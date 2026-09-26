@@ -100,7 +100,7 @@ func TestLSPPerformanceGates(t *testing.T) {
 		silent := newFakeServer(t)
 		silent.silent = true
 		starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
-			silent.attach(nopCloser(process.server), process.client)
+			silent.attach(process.server, process.client)
 		}}
 		client, err := New(Config{
 			Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,

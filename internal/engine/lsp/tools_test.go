@@ -5,7 +5,6 @@ package lsp
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,7 +134,7 @@ func TestHoverSaysSoWhenTheServerHasNothing(t *testing.T) {
 			}
 			return nil, &ResponseError{Code: CodeMethodNotFound, Message: method}
 		}
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter})
 	if err != nil {
@@ -156,7 +155,7 @@ func TestHoverSaysSoWhenTheServerHasNothing(t *testing.T) {
 		t.Fatalf("text = %q", text)
 	}
 	// A hover that answers with an empty value is the same case.
-	starter.onLaunch = func(process *pipeProcess) {
+	starter.track(t, func(process *pipeProcess) *fakeServer {
 		server := newFakeServer(t)
 		server.handler = func(method string, _ json.RawMessage) (json.RawMessage, *ResponseError) {
 			if method == MethodTextDocumentHover {
@@ -164,8 +163,10 @@ func TestHoverSaysSoWhenTheServerHasNothing(t *testing.T) {
 			}
 			return nil, &ResponseError{Code: CodeMethodNotFound, Message: method}
 		}
-		server.attach(io.NopCloser(process.server), process.client)
-	}
+		server.attach(process.server, process.client)
+
+		return server
+	})
 	// A second client is needed because the first one already negotiated its
 	// capabilities, and the assertion is about the empty value rather than the
 	// negotiation.
@@ -253,7 +254,7 @@ func TestACapabilityTheServerLacksIsRefused(t *testing.T) {
 	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
 		server := newFakeServer(t)
 		server.capabilities = ServerCapabilities{}
-		server.attach(io.NopCloser(process.server), process.client)
+		server.attach(process.server, process.client)
 	}}
 	client, err := New(Config{Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter})
 	if err != nil {
