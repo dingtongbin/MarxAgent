@@ -255,15 +255,20 @@ func TestRenameReturnsEditsAndWritesNothing(t *testing.T) {
 func TestACapabilityTheServerLacksIsRefused(t *testing.T) {
 	// Sending a request for a capability the server did not claim would only earn
 	// an error, and an error a caller has to interpret is worse than a refusal.
-	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
+	starter := &pipeStarter{}
+	starter.track(t, func(process *pipeProcess) *fakeServer {
 		server := newFakeServer(t)
 		server.capabilities = ServerCapabilities{}
 		server.attach(process.server, process.client)
-	}}
+		return server
+	})
 	client, err := New(Config{Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A client built here rather than through the pool still reports why its reader
+	// ended, because a failure with no cause is a failure somebody has to guess at.
+	watchCrashes(t, client)
 	defer client.Close()
 	pool, err := NewPool(client)
 	if err != nil {
