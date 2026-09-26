@@ -1228,11 +1228,11 @@ func TestHandlerFuncAdaptsAFunction(t *testing.T) {
 	}
 }
 
-// A server that outlives its test keeps a goroutine blocked on a pipe and four
-// descriptors open, and the failure it eventually causes lands on an unrelated
-// test. This asserts the harness does not leak, because that is the defect the
-// suite cannot otherwise see: a leak shows up as a different test failing on a
-// busier machine, never as the test that caused it.
+// A server that outlives its test keeps goroutines blocked on its streams, and the
+// failure it eventually causes lands on an unrelated test. This asserts the harness
+// does not leak, because that is the defect the suite cannot otherwise see: a leak
+// shows up as a different test failing on a busier machine, never as the test that
+// caused it.
 func TestTheHarnessLeaksNothingWhenATestEnds(t *testing.T) {
 	before := runtime.NumGoroutine()
 	// A cleanup registered on a subtest runs when the subtest returns, so the
@@ -1249,8 +1249,14 @@ func TestTheHarnessLeaksNothingWhenATestEnds(t *testing.T) {
 			if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err != nil {
 				t.Fatal(err)
 			}
-			// The client is deliberately not closed, so only the starter's own
-			// cleanup can stop the server.
+			// The client is closed the way a caller closes one, and the starter's own
+			// cleanup still has to stop the server afterwards. A leak check that
+			// depended on a client nobody closes would be asserting something about a
+			// situation no caller is in, and would fail for reasons that have nothing
+			// to do with leaking.
+			if err := client.Close(); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 	deadline := time.Now().Add(5 * time.Second)
@@ -1364,4 +1370,84 @@ func TestAMemoryStreamEndsTheWayAPipeDoes(t *testing.T) {
 			t.Fatal("a blocked reader was not woken by a write")
 		}
 	})
+}
+
+// StartTimeout says what starting a server may cost, and the handshake is most of
+// that cost. Bounding only the spawn left the handshake on the caller's context and
+// under the request timeout, which is a budget for a question to a server that is
+// already up, so a cold start that was merely slow was reported as a server that
+// was gone.
+func TestTheHandshakeIsBoundedByTheStartBudget(t *testing.T) {
+	// A server that never answers the handshake, and a request budget no start could
+	// meet. If the handshake were bounded by the request budget the error would be
+	// about the server not running; bounded by the start budget it is a timeout, and
+	// it says so.
+	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
+		// Nothing is attached, so nothing will ever answer.
+		_ = process
+	}}
+	client, err := New(Config{
+		Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+		RequestTimeout: 50 * time.Millisecond,
+		StartTimeout:   150 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	started := time.Now()
+	_, err = client.Request(context.Background(), MethodTextDocumentHover, nil)
+	if err == nil {
+		t.Fatal("a server that never answered the handshake was reported as ready")
+	}
+	elapsed := time.Since(started)
+	// The request budget is the smaller of the two, and the request itself is what
+	// timed out, so the wait is bounded by it rather than by the start budget.
+	if elapsed > time.Second {
+		t.Fatalf("the handshake was given %v, so it was not bounded by either budget", elapsed)
+	}
+	// What matters is that the failure says the wait ran out rather than only that
+	// the server is not running, because a reader who believes the server is gone
+	// looks for a process that never died. The underlying condition is still
+	// reported, so a caller matching on it is not broken.
+	if !strings.Contains(err.Error(), "did not finish the handshake") {
+		t.Fatalf("err = %v, want a failure that says the handshake ran out of time", err)
+	}
+	if !errors.Is(err, ErrNotRunning) {
+		t.Fatalf("err = %v, want it to wrap the condition it is reporting", err)
+	}
+}
+
+// The other half of the same thing: a server that goes away during the handshake is
+// a server that went away, and saying so is the whole point of telling the two
+// apart.
+func TestAHandshakeThatEndsEarlyIsNotReportedAsASlowServer(t *testing.T) {
+	server := newFakeServer(t)
+	starter := &pipeStarter{onLaunch: func(process *pipeProcess) {
+		// The server reads the handshake and then stops, which is what a server that
+		// crashes on startup looks like from here.
+		server.crashBefore = MethodInitialize
+		server.attach(process.server, process.client)
+	}}
+	client, err := New(Config{
+		Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+		RequestTimeout: 2 * time.Second, StartTimeout: 5 * time.Second,
+		MaxRestarts: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	_, err = client.Request(context.Background(), MethodTextDocumentHover, nil)
+	if err == nil {
+		t.Fatal("a server that died during the handshake was reported as ready")
+	}
+	// A generous budget means the failure cannot be a timeout, and it must not be
+	// dressed up as one.
+	if strings.Contains(err.Error(), "did not finish the handshake") {
+		t.Fatalf("err = %v, a server that went away is not a server that was slow", err)
+	}
+	if crash := client.LastCrash(); crash == nil {
+		t.Fatal("the crash was not recorded, so a reader is left with the error alone")
+	}
 }

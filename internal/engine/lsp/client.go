@@ -364,7 +364,13 @@ func (c *Client) start(ctx context.Context) error {
 		_ = c.abandonStart()
 		return fmt.Errorf("lsp: build the initialize request: %w", err)
 	}
-	response, err := c.exchangeRaw(ctx, "initialize", initialize, false)
+	// The handshake runs under the start budget rather than the caller's, because
+	// the start budget is the one that says what starting a server may cost. A cold
+	// language server is launched, may index a workspace before it answers, and is
+	// given a request timeout that is meant for a question on a server that is
+	// already up. Handing the handshake the caller's context left it bounded by
+	// neither, so a start that was merely slow looked like a server that was gone.
+	response, err := c.exchangeRaw(startCtx, "initialize", initialize, false)
 	if err != nil {
 		_ = c.abandonStart()
 		return fmt.Errorf("lsp: initialize: %w", err)
@@ -670,15 +676,29 @@ func (c *Client) exchangeRaw(
 		return response, nil
 	case <-waiter.done:
 		// The connection went away while the request was in flight.
-		return c.retryAfterCrash(ctx, method, params, requireInitialized)
+		return c.retryAfterCrash(ctx, method, params, requireInitialized, errServerWentAway)
 	case <-ctx.Done():
 		c.forget(key)
 		return Message{}, ctx.Err()
 	case <-timeout.C:
 		c.forget(key)
-		return c.retryAfterCrash(ctx, method, params, requireInitialized)
+		// A server that is up and slow is not a server that went away, and saying so
+		// sends a reader looking for a process that is still running. The handshake
+		// is where the two are most easily confused, because a cold server that is
+		// indexing before it answers looks exactly like one that died.
+		return c.retryAfterCrash(ctx, method, params, requireInitialized, errNoAnswerInTime)
 	}
 }
+
+// whyARetryStopped says why a question was not asked a second time.
+type retryOutcome int
+
+const (
+	// errServerWentAway is the connection ending under a question in flight.
+	errServerWentAway retryOutcome = iota
+	// errNoAnswerInTime is the wait running out with the server still there.
+	errNoAnswerInTime
+)
 
 // retryAfterCrash brings a dead server back and sends the question once more.
 //
@@ -689,10 +709,19 @@ func (c *Client) exchangeRaw(
 // repeated, because repeating one could open a document twice.
 func (c *Client) retryAfterCrash(
 	ctx context.Context, method string, params []byte, requireInitialized bool,
+	outcome retryOutcome,
 ) (Message, error) {
 	if method == MethodInitialize {
 		// The handshake has its own path through start, so retrying it here would
-		// start a second server.
+		// start a second server. That is the right call and a poor thing to report,
+		// because both a server that went away and one that was merely slow arrive
+		// here, and telling a caller the server is not running when it is running
+		// and slow sends them to look for a process that never died.
+		if outcome == errNoAnswerInTime {
+			return Message{}, fmt.Errorf(
+				"lsp: the language server did not finish the handshake within %v: %w",
+				c.config.RequestTimeout, ErrNotRunning)
+		}
 		return Message{}, ErrNotRunning
 	}
 	c.mu.Lock()
