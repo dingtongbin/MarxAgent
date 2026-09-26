@@ -559,6 +559,12 @@ func sortDurations(values []time.Duration) {
 	}
 }
 
+// The two sinks are fed from one queue, so what the test is about is that a
+// record lands in both in the order it was appended. The order of the writing is
+// not the subject, so the test ends the run itself rather than waiting for a
+// trigger: the watermark only fires once the queue is full, and how many records
+// happen to be left over depends on where a write landed, so waiting for all nine
+// would be waiting for an alignment the buffer makes no promise about.
 func TestWriteBufferKeepsRecordOrderAcrossSinks(t *testing.T) {
 	journal := &memorySink{}
 	ledger := &memorySink{}
@@ -569,17 +575,71 @@ func TestWriteBufferKeepsRecordOrderAcrossSinks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	waitFor(t, func() bool {
-		records, _, _ := journal.snapshot()
-		return len(records) == 9
-	})
+	if err := buffer.Flush(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	journalRecords, _, _ := journal.snapshot()
 	ledgerRecords, _, _ := ledger.snapshot()
+	if len(journalRecords) != 9 || len(ledgerRecords) != 9 {
+		t.Fatalf("journal=%d ledger=%d, want nine each", len(journalRecords), len(ledgerRecords))
+	}
 	for index := range journalRecords {
 		if journalRecords[index].Seq != ledgerRecords[index].Seq {
 			t.Fatalf("record %d diverged between sinks", index)
 		}
+		// The sinks are fed from one batch, so a record that reached them out of
+		// order would mean the queue handed them out in different orders.
+		if journalRecords[index].Seq != int64(index+1) {
+			t.Fatalf("record %d has sequence %d, so the order was not kept", index, journalRecords[index].Seq)
+		}
 	}
+}
+
+// The watermark writes on its own, and the periodic trigger is the backstop for
+// whatever is left under it. The two are asserted separately because together they
+// hide a trigger that stopped working: nine records is a multiple of the
+// watermark, so a broken watermark would still be covered by the period, and a
+// broken period would be covered by the watermark.
+func TestTheWatermarkWritesOnItsOwnAndThePeriodCoversTheRest(t *testing.T) {
+	t.Run("the watermark writes without waiting for the period", func(t *testing.T) {
+		sink := &memorySink{}
+		// A period long enough that it cannot be what wrote the records.
+		buffer := newTestBuffer(t, Config{WatermarkRecords: 4, FlushPeriod: time.Hour}, sink)
+		runBuffer(t, buffer)
+		for index := 0; index < 4; index++ {
+			if err := buffer.Append(message("session:a", fmt.Sprintf("m%d", index))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		waitFor(t, func() bool {
+			records, _, _ := sink.snapshot()
+			return len(records) == 4
+		})
+	})
+
+	t.Run("the period writes what the watermark leaves behind", func(t *testing.T) {
+		sink := &memorySink{}
+		// A watermark nothing reaches and a period short enough to observe, which
+		// together describe the case the design promises a bound for: records left
+		// under the watermark are written within one period.
+		buffer := newTestBuffer(t, Config{
+			WatermarkRecords: 1 << 20,
+			FlushPeriod:      10 * time.Millisecond,
+		}, sink)
+		runBuffer(t, buffer)
+		for index := 0; index < 3; index++ {
+			if err := buffer.Append(message("session:a", fmt.Sprintf("m%d", index))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The condition waits for the sync as well as the write, because the sink
+		// records them in that order and a poll that stopped at the write would be
+		// measuring when the test looked rather than what the loop did.
+		waitFor(t, func() bool {
+			records, _, syncs := sink.snapshot()
+			return len(records) == 3 && syncs > 0
+		})
+	})
 }
 
 func TestBufferSurvivesARestart(t *testing.T) {

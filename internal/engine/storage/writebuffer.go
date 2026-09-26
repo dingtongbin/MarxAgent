@@ -217,22 +217,54 @@ func (b *WriteBuffer) Run(ctx context.Context) error {
 			// The shutdown budget belongs to the caller, so the fallback flush
 			// uses a detached context with its own bound.
 			flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), b.config.FlushPeriod*10)
-			err := b.drain(flushCtx, true)
+			err := b.drainAll(flushCtx, true)
 			cancel()
 			b.markClosed()
 			return err
 		case <-ticker.C:
 			// The periodic trigger is what caps the power loss window, so it both
 			// writes and syncs; the watermark trigger only writes.
-			if err := b.drain(ctx, true); err != nil {
+			if err := b.drainAll(ctx, true); err != nil {
 				return err
 			}
 		case <-b.signal:
-			if err := b.drain(ctx, false); err != nil {
+			if err := b.drainAll(ctx, false); err != nil {
 				return err
 			}
 		}
 	}
+}
+
+// drainAll writes until the queue is empty.
+//
+// A single drain is not enough, and the reason is a lost wakeup rather than a
+// slow sink. A drain takes the queue and then releases the lock to write, so a
+// record appended during that write reaches the watermark and sets the signal
+// while the signal this drain was started by is still being handled. The set is
+// dropped when a token is already pending, and the pending token is then consumed
+// by the drain already in progress, which had snapshotted the queue before the
+// record arrived. The record is left with nothing to wake it and, if the flush
+// period is long, nothing to save it either.
+//
+// Draining to empty makes the queue rather than the wakeup the thing that decides
+// when writing stops, so a wakeup is only ever a hint that something may be
+// waiting rather than the last chance to notice it.
+func (b *WriteBuffer) drainAll(ctx context.Context, sync bool) error {
+	for {
+		if err := b.drain(ctx, false); err != nil {
+			return err
+		}
+		if b.Queued() == 0 {
+			break
+		}
+	}
+	if sync {
+		// The sink is synced once for the whole run rather than once per batch,
+		// because the records are already written and a sync per batch would cost a
+		// call per watermark for no additional durability.
+		b.syncSinks(ctx)
+	}
+	return nil
 }
 
 // Close stops accepting records and performs the fallback flush.
@@ -240,7 +272,10 @@ func (b *WriteBuffer) Close(ctx context.Context) error {
 	if ctx == nil {
 		return ErrNilContext
 	}
-	err := b.drain(ctx, true)
+	// The queue is drained to empty for the same reason the loop drains to empty:
+	// a caller closing the buffer is promising that nothing is left in memory, and
+	// a record that arrived during the final write would otherwise break it.
+	err := b.drainAll(ctx, true)
 	b.markClosed()
 	return err
 }
