@@ -22,9 +22,9 @@ import (
 // a pair of pipes. It exercises the real framing, the real dispatch and the real
 // restart path, which a stubbed reader would not.
 type fakeServer struct {
-	t        *testing.T
-	reader   *Reader
-	writer   *Writer
+	t *testing.T
+	// requests is every message the server has read, guarded by stateMu because
+	// the serving goroutine writes it while the test reads it.
 	requests []Message
 	// capabilities is what the handshake answers with.
 	capabilities ServerCapabilities
@@ -48,17 +48,14 @@ type fakeServer struct {
 	stateMu sync.Mutex
 	// served counts the messages handled.
 	served int
-	// stopCloses is closed to bring the serving goroutine out of its read.
+	// sessions are the launches this server has served, one per attach.
+	sessions []*serveSession
+	// stopCloses is closed to bring the serving goroutines out of their reads.
 	stopCloses chan struct{}
 	// stopped guards against closing twice.
 	stopped bool
-	// output is the server's end of the stream, closed when the server stops.
+	// output is the server's end of the stream for the newest launch.
 	output io.WriteCloser
-	// input is the server's read end, closed to bring a blocked read out of it.
-	input    io.ReadCloser
-	outputMu sync.Mutex
-	// finished is closed when the loop stops.
-	finished chan struct{}
 	// toClient carries messages the server sends to the client.
 	toClient chan Message
 }
@@ -73,7 +70,6 @@ func newFakeServer(t *testing.T) *fakeServer {
 			RenameProvider:     boolPtr(true),
 		},
 		stopCloses: make(chan struct{}),
-		finished:   make(chan struct{}),
 		toClient:   make(chan Message, 16),
 	}
 }
@@ -94,9 +90,16 @@ func (s *fakeServer) stop() {
 		return
 	}
 	s.stopped = true
+	sessions := append([]*serveSession(nil), s.sessions...)
+	s.sessions = nil
 	s.stateMu.Unlock()
 	close(s.stopCloses)
-	<-s.finished
+	// Every session is waited for, not just the newest. A server attached more than
+	// once has one goroutine per attach, and returning while an older one is still
+	// reading would leave it running past the end of its test.
+	for _, session := range sessions {
+		<-session.done
+	}
 }
 
 // handled reports how many messages the server has handled.
@@ -112,22 +115,32 @@ func (s *fakeServer) handled() int {
 // stream, so a message the test sends reaches the client through the same framing
 // a real server would use rather than through a side channel the client does not
 // know about.
+//
+// Each call gets its own serving session, and the session owns the streams it was
+// given rather than reading them back off the server. A server can be attached
+// more than once, because a restart looks exactly like that, and a session that
+// looked its streams up on the way out would close whichever launch was current
+// when it happened to exit. That closes a live server's pipe under the client,
+// which shows up as a handshake that fails for no reason, on whichever test the
+// scheduler was running.
 func (s *fakeServer) attach(clientToServer io.ReadCloser, serverToClient io.WriteCloser) {
-	s.reader = NewReader(clientToServer)
-	s.writer = NewWriter(serverToClient)
-	// The stream is kept so a stopped server can close it. A read that is already
-	// blocked comes out only when its end is closed, and a server waiting on a
-	// client that will never write again is a goroutine that never ends.
+	session := &serveSession{
+		reader: NewReader(clientToServer),
+		writer: NewWriter(serverToClient),
+		input:  clientToServer,
+		output: serverToClient,
+		done:   make(chan struct{}),
+	}
 	s.stateMu.Lock()
-	s.input = clientToServer
+	s.sessions = append(s.sessions, session)
 	s.output = serverToClient
 	s.stateMu.Unlock()
-	go s.serve()
+	go s.serve(session)
 	go func() {
 		for {
 			select {
 			case message := <-s.toClient:
-				if err := s.writer.Write(message); err != nil {
+				if err := session.writer.Write(message); err != nil {
 					return
 				}
 			case <-s.stopCloses:
@@ -139,31 +152,34 @@ func (s *fakeServer) attach(clientToServer io.ReadCloser, serverToClient io.Writ
 	}()
 }
 
-func (s *fakeServer) serve() {
-	defer close(s.finished)
+// serveSession is one launch's worth of a fake server.
+type serveSession struct {
+	reader *Reader
+	writer *Writer
+	input  io.ReadCloser
+	output io.WriteCloser
+	done   chan struct{}
+}
+
+func (s *fakeServer) serve(session *serveSession) {
+	defer close(session.done)
 	// The stream is closed when the loop ends, because that is what a process
 	// exiting does to its pipes. Without it the client would wait for an answer from
 	// a server that is gone, and the test would be measuring the harness rather than
-	// the client.
+	// the client. The stream closed is the session's own, never whatever the server
+	// is attached to now.
 	defer func() {
-		if s.writer != nil {
-			_ = s.closeOutput()
-		}
+		_ = session.output.Close()
 	}()
 	go func() {
 		// Closing the client's end of the stream is the only way to bring a read
 		// that is already blocked out of it, so a stopped server unblocks itself
 		// rather than waiting for a client that may never write again.
 		<-s.stopCloses
-		s.stateMu.Lock()
-		input := s.input
-		s.stateMu.Unlock()
-		if input != nil {
-			_ = input.Close()
-		}
+		_ = session.input.Close()
 	}()
 	for {
-		message, err := s.reader.Read()
+		message, err := session.reader.Read()
 		if err != nil {
 			return
 		}
@@ -193,7 +209,7 @@ func (s *fakeServer) serve() {
 		} else {
 			reply.Result = result
 		}
-		if err := s.writer.Write(reply); err != nil {
+		if err := session.writer.Write(reply); err != nil {
 			return
 		}
 	}
@@ -228,16 +244,6 @@ func (s *fakeServer) answer(method string, params json.RawMessage) (json.RawMess
 	default:
 		return nil, &ResponseError{Code: CodeMethodNotFound, Message: "unknown method " + method}
 	}
-}
-
-// closeOutput closes the server's end of the stream.
-func (s *fakeServer) closeOutput() error {
-	s.outputMu.Lock()
-	defer s.outputMu.Unlock()
-	if s.output == nil {
-		return nil
-	}
-	return s.output.Close()
 }
 
 // send pushes a message from the server to the client.
