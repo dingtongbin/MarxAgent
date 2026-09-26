@@ -1,0 +1,26 @@
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_corpus","status":"in_progress"}}
+
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"reasoning","id":"rs_corpus","summary":[]}}
+
+data: {"type":"response.reasoning_summary_text.delta","sequence_number":2,"output_index":0,"item_id":"rs_corpus","delta":"Hello"}
+
+data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"reasoning","id":"rs_corpus","summary":[]}}
+
+data: {"type":"response.content_part.added","sequence_number":4,"output_index":1,"item_id":"msg_corpus","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","sequence_number":5,"output_index":1,"item_id":"msg_corpus","delta":"Hello from the corpus."}
+
+data: {"type":"response.output_text.done","sequence_number":6,"output_index":1,"item_id":"msg_corpus","text":"Hello from the corpus."}
+
+data: {"type":"response.output_item.done","sequence_number":7,"output_index":1,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello from the corpus."}]}}
+
+data: {"type":"response.output_item.added","sequence_number":8,"output_index":2,"item":{"type":"function_call","id":"fc_corpus","call_id":"call_corpus","name":"read","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","sequence_number":9,"output_index":2,"item_id":"fc_corpus","delta":"{\"path\":"}
+
+data: {"type":"response.function_call_arguments.delta","sequence_number":10,"output_index":2,"item_id":"fc_corpus","delta":"\"a.txt\"}"}
+
+data: {"type":"response.output_item.done","sequence_number":11,"output_index":2,"item":{"type":"function_call","id":"fc_corpus","call_id":"call_corpus","name":"read","arguments":"{\"path\":\"a.txt\"}"}}
+
+data: {"type":"response.completed","sequence_number":12,"response":{"id":"resp_corpus","status":"completed","usage":{"input_tokens":31,"output_tokens":12,"input_tokens_details":{"cached_tokens":24}}}}
+

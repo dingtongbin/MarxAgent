@@ -42,17 +42,61 @@ jobs:
         run: |
           go mod verify
           go mod tidy -diff
-          go list -m all
-          while IFS= read -r module; do
-            case "$module" in
-              github.com/modelcontextprotocol/go-sdk|go.yaml.in/yaml/v3|github.com/SivanCola/windows-sandbox|github.com/google/jsonschema-go|github.com/segmentio/asm|github.com/segmentio/encoding|github.com/yosida95/uritemplate/v3|github.com/golang-jwt/jwt/v5|github.com/google/go-cmp|cloud.google.com/go/compute/metadata|golang.org/x/oauth2|golang.org/x/sync|golang.org/x/sys|golang.org/x/time|golang.org/x/tools)
-                ;;
-              *)
-                printf 'Unapproved Go module: %s\n' "$module"
-                exit 1
-                ;;
-            esac
-          done < <(go list -m -f '{{.Path}}' all | tail -n +2)
+          # Which module identities may appear at all. This is a supply chain
+          # decision and not a licence one: tests/compliance reads the terms of
+          # every module that reaches the build, while this says what is allowed to
+          # be in the graph, including the ones only the graph carries.
+          #
+          # The comparison is a diff in both directions on purpose. A module that
+          # arrived without a line here is caught, and so is a line left behind by a
+          # dependency that went away, because an approved name that nothing uses is
+          # a decision nobody is looking at any more.
+          cat > /tmp/approved-modules.txt <<'MODULES'
+            cloud.google.com/go/compute/metadata
+            github.com/SivanCola/windows-sandbox
+            github.com/dustin/go-humanize
+            github.com/golang-jwt/jwt/v5
+            github.com/google/go-cmp
+            github.com/google/jsonschema-go
+            github.com/google/pprof
+            github.com/google/uuid
+            github.com/hashicorp/golang-lru/v2
+            github.com/mattn/go-isatty
+            github.com/modelcontextprotocol/go-sdk
+            github.com/ncruces/go-strftime
+            github.com/remyoudompheng/bigfft
+            github.com/segmentio/asm
+            github.com/segmentio/encoding
+            github.com/yosida95/uritemplate/v3
+            go.yaml.in/yaml/v3
+            golang.org/x/exp
+            golang.org/x/mod
+            golang.org/x/oauth2
+            golang.org/x/sync
+            golang.org/x/sys
+            golang.org/x/time
+            golang.org/x/tools
+            modernc.org/cc/v4
+            modernc.org/ccgo/v4
+            modernc.org/fileutil
+            modernc.org/gc/v2
+            modernc.org/gc/v3
+            modernc.org/goabi0
+            modernc.org/libc
+            modernc.org/mathutil
+            modernc.org/memory
+            modernc.org/opt
+            modernc.org/sortutil
+            modernc.org/sqlite
+            modernc.org/strutil
+            modernc.org/token
+          MODULES
+          sed -i 's/^ *//' /tmp/approved-modules.txt
+          go list -m -f '{{.Path}}' all | tail -n +2 | sort > /tmp/modules.txt
+          if ! diff -u /tmp/approved-modules.txt /tmp/modules.txt; then
+            printf 'The module set and the approved list disagree. A module with no line is unapproved; a line with no module is stale.\n'
+            exit 1
+          fi
       - name: Enforce CGO and L1 dependency boundaries
         shell: bash
         run: |
@@ -119,7 +163,70 @@ jobs:
       - name: Test
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 ./...
+        # The storage engine is left out of the parallel run and given its own below.
+        # The pure Go SQLite driver corrupts the Go runtime under memory pressure: it
+        # dies inside modernc.org/libc with a nil P in the scheduler, which is not a
+        # panic and cannot be recovered. It needs the machine busy, so a package on
+        # its own has never done it and a full parallel run does it about one time in
+        # six to eight. Running it alone is what removes the condition, and isolating
+        # it means the fault is reported against the part that has it instead of
+        # taking every other package's result with it.
+        run: go test -count=1 $(go list ./... | grep -v '/internal/engine/storage$')
+      - name: Test the storage engine on its own
+        env:
+          CGO_ENABLED: "0"
+        # -p 1 because the fault needs a busy machine. This is not a claim that the
+        # driver is sound under load, only that a test run is not a way to find out
+        # at the cost of everything else.
+        run: go test -count=1 -p 1 ./internal/engine/storage
+      # The storage suites run without coverage instrumentation for a second reason
+      # on top of the one above. Coverage makes the allocator work harder, which is
+      # the same pressure, so storage coverage is not a gate while the other packages
+      # keep theirs.
+      - name: Test the durability suites
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v -run 'Test(Scope|Recover|Clean|Write|Journal|Audit|Checkpoint|FileLock|Sink)' ./internal/engine/storage
+      - name: Test the crash contract
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/durability
+      - name: Test the seams between parts
+        # These are the promises no single package can keep on its own: a
+        # compaction that invalidates the cached prefix, a tool result that
+        # reaches the model as untrusted data, and a refused call that still
+        # answers the provider. A part can pass alone and break all three.
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/integration
+      - name: Check what the build depends on and under what terms
+        # AGENTS allows only permissive terms, so the terms are read from each
+        # module rather than remembered in a list that drifts.
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/compliance
+      - name: Test the context, cache and security parts verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/context ./internal/engine/cache ./internal/engine/security
+      # One part per step, because a bundled step reports one failure for four
+      # parts and the other three go unchecked until somebody reads the log.
+      - name: Test the subagent part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/subagent
+      - name: Test the logging part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/logging
+      - name: Test the language server part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/lsp
+      - name: Test the wiki part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/wiki
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
@@ -162,6 +269,43 @@ jobs:
           name: sandbox-coverage-${{ matrix.os }}
           path: sandbox-coverage.out
           if-no-files-found: error
+
+  gateway:
+    name: Gateway end to end (${{ matrix.format }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        format:
+          - openai-completions
+          - anthropic-messages
+          - openai-responses
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run the ${{ matrix.format }} main path
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v -run "TestEndToEndAllFormats/${{ matrix.format }}$" ./internal/engine/gateway
+      - name: Run the recorded corpora and property tests
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -run "Corpus|TestProperty" ./internal/engine/gateway
+      - name: Enforce the gateway coverage floor
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          go test -count=1 -coverprofile=gateway-coverage.out ./internal/engine/gateway
+          go tool cover -func=gateway-coverage.out
+          coverage="$(go tool cover -func=gateway-coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 90.0) exit 1 }'
 
   cross-builds:
     name: Build ${{ matrix.goos }}/${{ matrix.goarch }}
@@ -221,7 +365,15 @@ jobs:
       - name: Run race detector
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 ./...
+        # Storage is excluded here for the same reason it is excluded from the plain
+        # run, and the race detector makes the reason worse rather than better: it
+        # adds bookkeeping to every allocation, which is the pressure the driver
+        # cannot survive.
+        run: go test -race -count=1 $(go list ./... | grep -v '/internal/engine/storage$')
+      - name: Run race detector on the storage engine alone
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 -p 1 ./internal/engine/storage
 
   coverage:
     name: L1 coverage

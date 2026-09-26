@@ -112,25 +112,52 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 	command.Args = append(command.Args, argv[1:]...)
 	command.Env = append([]string(nil), env...)
 	command.Dir = dir
-	stdin, err := command.StdinPipe()
+	// The pipes are made here rather than with Cmd.StdoutPipe, which closes the
+	// reading end as soon as Wait sees the process exit. Whatever the command wrote
+	// and nobody had read yet is discarded at that point, so a process that exits
+	// promptly can report a clean exit code and no output at all. Holding the reading
+	// end here also means Wait has no opinion about it, so a caller reading
+	// incrementally gets every byte the process wrote.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
-	stdout, err := command.StdoutPipe()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
 		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
-	stderr, err := command.StderrPipe()
+	command.Stdout = stdoutWriter
+	command.Stderr = stderrWriter
+	stdinReader, stdin, err := os.Pipe()
 	if err != nil {
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
+		_ = stderr.Close()
+		_ = stderrWriter.Close()
 		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
+	command.Stdin = stdinReader
 	if err := command.Start(); err != nil {
+		_ = stdinReader.Close()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
+		_ = stderr.Close()
+		_ = stderrWriter.Close()
 		_ = os.RemoveAll(tempRoot)
 		return nil, err
 	}
+	// The child holds the reading and writing ends it needs now. Closing this
+	// process's copies is what lets a reader see the end of the stream when the
+	// child is done.
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
+	_ = stdinReader.Close()
 	wait := func() (Result, error) {
 		err := command.Wait()
 		code := -1
