@@ -1451,3 +1451,116 @@ func TestAHandshakeThatEndsEarlyIsNotReportedAsASlowServer(t *testing.T) {
 		t.Fatal("the crash was not recorded, so a reader is left with the error alone")
 	}
 }
+
+// Every question a client asks goes back through Ensure when its server dies, so a
+// crash mid-session costs one restart and the turn carries on. The handshake used to
+// have no retry at all, which made a server that died during its own startup the one
+// fault that cost the whole turn permanently. It is the same fault with none of the
+// recovery, and it is not a rare one: a first launch is when a server is most likely
+// to be short of something.
+func TestAServerThatDiesDuringItsHandshakeIsLaunchedAgain(t *testing.T) {
+	var mu sync.Mutex
+	launches := 0
+	starter := &pipeStarter{}
+	starter.track(t, func(process *pipeProcess) *fakeServer {
+		server := newFakeServer(t)
+		mu.Lock()
+		launches++
+		first := launches == 1
+		mu.Unlock()
+		if first {
+			// The first server reads the handshake and then stops, which is what a
+			// server that crashes on startup looks like from here.
+			server.crashBefore = MethodInitialize
+		}
+		server.attach(process.server, process.client)
+		return server
+	})
+	client, err := New(Config{
+		Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+		RequestTimeout: 2 * time.Second, MaxRestarts: 2, RestartBackoff: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchCrashes(t, client)
+	defer client.Close()
+	if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err != nil {
+		t.Fatalf("a server that died once during its handshake cost the whole turn: %v", err)
+	}
+	mu.Lock()
+	got := launches
+	mu.Unlock()
+	if got < 2 {
+		t.Fatalf("launches = %d, the server was not launched again", got)
+	}
+	if !client.Running() {
+		t.Fatal("the client is not running after recovering")
+	}
+}
+
+// The bound is the point. A server that dies on every handshake must stop, not spin,
+// and a caller has to hear that it did rather than wait out a timeout.
+func TestAServerThatDiesOnEveryHandshakeStops(t *testing.T) {
+	starter := &pipeStarter{}
+	starter.track(t, func(process *pipeProcess) *fakeServer {
+		server := newFakeServer(t)
+		server.crashBefore = MethodInitialize
+		server.attach(process.server, process.client)
+		return server
+	})
+	client, err := New(Config{
+		Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+		RequestTimeout: time.Second, MaxRestarts: 2, RestartBackoff: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchCrashes(t, client)
+	defer client.Close()
+	if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err == nil {
+		t.Fatal("a server that dies on every handshake was reported as ready")
+	}
+	// One first attempt plus MaxRestarts, and no more: the bound is the promise that
+	// a broken server is worse than no server.
+	started := time.Now()
+	if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err == nil {
+		t.Fatal("a second question started a server that cannot answer")
+	}
+	if elapsed := time.Since(started); elapsed > 5*time.Second {
+		t.Fatalf("the bound was not honoured: %v", elapsed)
+	}
+}
+
+// A handshake that ran out of time is not a server that went away, and launching it
+// again does not make it answer any sooner. It must not be retried.
+func TestAServerThatIsMerelySlowIsNotLaunchedAgain(t *testing.T) {
+	var mu sync.Mutex
+	launches := 0
+	starter := &pipeStarter{}
+	starter.onLaunch = func(process *pipeProcess) {
+		mu.Lock()
+		launches++
+		mu.Unlock()
+		// Nothing is attached, so nothing will ever answer.
+		_ = process
+	}
+	client, err := New(Config{
+		Command: []string{"gopls"}, Workspace: t.TempDir(), Starter: starter,
+		RequestTimeout: 60 * time.Millisecond, StartTimeout: 500 * time.Millisecond,
+		MaxRestarts: 3, RestartBackoff: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err == nil {
+		t.Fatal("a server that never answered was reported as ready")
+	}
+	mu.Lock()
+	got := launches
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("launches = %d, a server that was merely slow was launched again", got)
+	}
+}

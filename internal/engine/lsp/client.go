@@ -300,6 +300,91 @@ func (c *Client) Ensure(ctx context.Context) error {
 }
 
 func (c *Client) start(ctx context.Context) error {
+	// The handshake is retried inside start rather than by the caller, and the
+	// reason is that the handshake is the one request that used to have no retry at
+	// all. Every other question goes back through Ensure when its server dies, so a
+	// server that crashes mid-session costs one restart and the turn carries on. A
+	// server that dies during its handshake cost the whole turn, permanently, which
+	// is the same fault with none of the recovery.
+	//
+	// It is retried here rather than through Ensure because Ensure is what sets the
+	// starting flag, and clearing it mid-handshake would let a concurrent request
+	// start a second server. Doing it inside the start that owns the flag keeps the
+	// attempt bounded by the same MaxRestarts a crash loop is bounded by, so a server
+	// that dies on every handshake still stops instead of spinning.
+	// The retry spends the same budget a crash loop spends, rather than a budget of
+	// its own. A bound that resets every time a server is started is not a bound: it
+	// would let a caller who asks twice launch twice as many, and the promise that a
+	// broken server is worse than no server would be worth nothing.
+	attempts := 0
+	var lastErr error
+	for {
+		capabilities, err := c.startOnce(ctx)
+		if err == nil {
+			c.mu.Lock()
+			c.capabilities = capabilities
+			c.initialized = true
+			c.mu.Unlock()
+			return nil
+		}
+		lastErr = err
+		_ = c.abandonStart()
+		attempts++
+		if !c.spendRestartForHandshake(attempts) {
+			break
+		}
+		if err := c.waitBeforeRestart(ctx); err != nil {
+			return err
+		}
+	}
+	return lastErr
+}
+
+// spendRestartForHandshake reports whether another cold start is worth attempting,
+// and counts it against the same bound a crash loop is counted against.
+//
+// A server that went away is worth one more try, because a first launch is the
+// point at which a server is most likely to be short of something. A server that ran
+// out of time is not, because launching it again does not make it answer sooner.
+func (c *Client) spendRestartForHandshake(attempt int) bool {
+	if c.config.MaxRestarts <= 0 || attempt > 1 {
+		// Only the first failure is worth a second look. After that a server that
+		// keeps dying is a server that will keep dying, and the bound exists for
+		// exactly that case.
+		return false
+	}
+	crash := c.LastCrash()
+	if crash == nil {
+		// Nothing observed a death, so nothing was lost and there is nothing to
+		// recover from. This is the timed-out case.
+		return false
+	}
+	if errors.Is(crash.Err, errHandshakeTimedOut) {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.restarts >= c.config.MaxRestarts {
+		return false
+	}
+	c.restarts++
+	return true
+}
+
+func (c *Client) waitBeforeRestart(ctx context.Context) error {
+	if c.config.RestartBackoff <= 0 {
+		return nil
+	}
+	select {
+	case <-time.After(c.config.RestartBackoff):
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// startOnce launches a server and performs the handshake with it.
+func (c *Client) startOnce(ctx context.Context) (ServerCapabilities, error) {
 	starter := c.config.Starter
 	if starter == nil {
 		starter = sandbox.NewUnrestricted()
@@ -308,7 +393,7 @@ func (c *Client) start(ctx context.Context) error {
 	defer cancel()
 	process, err := starter.Start(startCtx, c.config.Command, c.config.Environment, c.config.Workspace)
 	if err != nil {
-		return fmt.Errorf("lsp: start %q: %w", c.config.Command[0], err)
+		return ServerCapabilities{}, fmt.Errorf("lsp: start %q: %w", c.config.Command[0], err)
 	}
 	reader := NewReader(process.Stdout())
 	writer := NewWriter(process.Stdin())
@@ -361,8 +446,7 @@ func (c *Client) start(ctx context.Context) error {
 		Trace: "off",
 	})
 	if err != nil {
-		_ = c.abandonStart()
-		return fmt.Errorf("lsp: build the initialize request: %w", err)
+		return ServerCapabilities{}, fmt.Errorf("lsp: build the initialize request: %w", err)
 	}
 	// The handshake runs under the start budget rather than the caller's, because
 	// the start budget is the one that says what starting a server may cost. A cold
@@ -372,25 +456,18 @@ func (c *Client) start(ctx context.Context) error {
 	// neither, so a start that was merely slow looked like a server that was gone.
 	response, err := c.exchangeRaw(startCtx, "initialize", initialize, false)
 	if err != nil {
-		_ = c.abandonStart()
-		return fmt.Errorf("lsp: initialize: %w", err)
+		return ServerCapabilities{}, fmt.Errorf("lsp: initialize: %w", err)
 	}
 	var capabilities ServerCapabilities
 	if len(response.Result) > 0 {
 		if err := json.Unmarshal(response.Result, &capabilities); err != nil {
-			_ = c.abandonStart()
-			return fmt.Errorf("lsp: decode the server capabilities: %w", err)
+			return ServerCapabilities{}, fmt.Errorf("lsp: decode the server capabilities: %w", err)
 		}
 	}
 	if err := c.notify("initialized", []byte(`{}`)); err != nil {
-		_ = c.abandonStart()
-		return fmt.Errorf("lsp: the initialized notification: %w", err)
+		return ServerCapabilities{}, fmt.Errorf("lsp: the initialized notification: %w", err)
 	}
-	c.mu.Lock()
-	c.capabilities = capabilities
-	c.initialized = true
-	c.mu.Unlock()
-	return nil
+	return capabilities, nil
 }
 
 // abandonStart tears down a server whose handshake failed.
@@ -690,6 +767,12 @@ func (c *Client) exchangeRaw(
 	}
 }
 
+// errHandshakeTimedOut is what a handshake that ran out of time reports. It wraps
+// ErrNotRunning so a caller matching on the condition is unaffected, and it is a
+// distinct value so the start can tell a server that was slow from one that went
+// away, because only the second is worth launching again.
+var errHandshakeTimedOut = fmt.Errorf("the handshake ran out of time: %w", ErrNotRunning)
+
 // whyARetryStopped says why a question was not asked a second time.
 type retryOutcome int
 
@@ -720,7 +803,7 @@ func (c *Client) retryAfterCrash(
 		if outcome == errNoAnswerInTime {
 			return Message{}, fmt.Errorf(
 				"lsp: the language server did not finish the handshake within %v: %w",
-				c.config.RequestTimeout, ErrNotRunning)
+				c.config.RequestTimeout, errHandshakeTimedOut)
 		}
 		return Message{}, ErrNotRunning
 	}

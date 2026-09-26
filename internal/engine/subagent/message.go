@@ -11,6 +11,7 @@
 package subagent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -100,8 +101,13 @@ type Mailbox struct {
 	// dropped counts messages this mailbox could not hold, which is a number worth
 	// surfacing rather than a silent loss.
 	dropped int64
-	mu      sync.Mutex
-	closed  bool
+	// delivered counts messages this mailbox took. It is kept apart from the length
+	// of the queue on purpose: the queue is what is waiting, and this is what the
+	// agent has been sent, which is what a reader asking how much an agent has been
+	// sent actually means.
+	delivered int64
+	mu        sync.Mutex
+	closed    bool
 }
 
 // MailboxCapacity is how many messages an agent may fall behind by before sends to
@@ -121,6 +127,38 @@ func (m *Mailbox) Receive() (Message, bool) {
 		return Message{}, false
 	}
 	return message.Clone(), true
+}
+
+// ReceiveWithinContext returns the next message, giving up after the wait or as soon
+// as the caller is done, whichever comes first.
+//
+// It exists because ReceiveWithin cannot be stopped from outside. A caller that hands
+// over a deadline and then has it cut short by a cancelled turn would otherwise go on
+// waiting for a wait it no longer has any reason to serve, and a turn that was
+// abandoned would leave a goroutine behind for as long as it asked to wait.
+func (m *Mailbox) ReceiveWithinContext(ctx context.Context, wait time.Duration) (Message, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return Message{}, false
+	}
+	if wait <= 0 {
+		return m.ReceiveWithin(0)
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case message, ok := <-m.mailbox:
+		if !ok {
+			return Message{}, false
+		}
+		return message.Clone(), true
+	case <-timer.C:
+		return Message{}, false
+	case <-ctx.Done():
+		return Message{}, false
+	}
 }
 
 // ReceiveWithin returns the next message, giving up after the wait.
@@ -173,6 +211,9 @@ func (m *Mailbox) deliver(message Message) bool {
 	m.mu.Unlock()
 	select {
 	case m.mailbox <- message.Clone():
+		m.mu.Lock()
+		m.delivered++
+		m.mu.Unlock()
 		return true
 	default:
 		m.mu.Lock()
@@ -180,6 +221,13 @@ func (m *Mailbox) deliver(message Message) bool {
 		m.mu.Unlock()
 		return false
 	}
+}
+
+// Delivered reports how many messages this mailbox has taken since it was created.
+func (m *Mailbox) Delivered() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.delivered
 }
 
 // close empties the mailbox and refuses further deliveries.
