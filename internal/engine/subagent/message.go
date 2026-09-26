@@ -100,8 +100,13 @@ type Mailbox struct {
 	// dropped counts messages this mailbox could not hold, which is a number worth
 	// surfacing rather than a silent loss.
 	dropped int64
-	mu      sync.Mutex
-	closed  bool
+	// delivered counts messages this mailbox took. It is kept apart from the length
+	// of the queue on purpose: the queue is what is waiting, and this is what the
+	// agent has been sent, which is what a reader asking how much an agent has been
+	// sent actually means.
+	delivered int64
+	mu        sync.Mutex
+	closed    bool
 }
 
 // MailboxCapacity is how many messages an agent may fall behind by before sends to
@@ -173,6 +178,9 @@ func (m *Mailbox) deliver(message Message) bool {
 	m.mu.Unlock()
 	select {
 	case m.mailbox <- message.Clone():
+		m.mu.Lock()
+		m.delivered++
+		m.mu.Unlock()
 		return true
 	default:
 		m.mu.Lock()
@@ -180,6 +188,13 @@ func (m *Mailbox) deliver(message Message) bool {
 		m.mu.Unlock()
 		return false
 	}
+}
+
+// Delivered reports how many messages this mailbox has taken since it was created.
+func (m *Mailbox) Delivered() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.delivered
 }
 
 // close empties the mailbox and refuses further deliveries.

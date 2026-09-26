@@ -5,6 +5,7 @@ package subagent
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 )
@@ -232,6 +233,95 @@ func (r *Registry) List() []Agent {
 		agents = append(agents, agent)
 	}
 	return agents
+}
+
+// Delete removes an agent, which only the main core may do.
+//
+// Deleting is not the same as finishing. A finished agent is done and its record is
+// what a later caller reads to find out what it did; a deleted one is gone from the
+// registry, and that is only for a slot the main core has finished with.
+func (r *Registry) Delete(ctx context.Context, byAgentID, agentID string) error {
+	if ctx == nil {
+		return ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if byAgentID != r.mainID {
+		return fmt.Errorf("%w: %q tried to delete %q", ErrNotMain, byAgentID, agentID)
+	}
+	if agentID == r.mainID {
+		// The main core is not a sub agent and cannot be deleted by this path, because
+		// a registry with no main core has no way to enforce the rule it exists for.
+		return fmt.Errorf("%w: the main core cannot be deleted", ErrNotMain)
+	}
+	r.mu.Lock()
+	if _, exists := r.agents[agentID]; !exists {
+		r.mu.Unlock()
+		return fmt.Errorf("%w: %q", ErrNoSuchAgent, agentID)
+	}
+	delete(r.agents, agentID)
+	delete(r.handles, agentID)
+	r.mu.Unlock()
+	if r.broker != nil {
+		r.broker.Unregister(agentID)
+	}
+	return nil
+}
+
+// Register records a place a sub agent can run.
+//
+// This is not Spawn. A slot exists before anything runs on it and is reused after
+// each task, so it is registered once and lives until it is deleted, while Spawn is
+// for an agent that has been built. Conflating them would mean a pool had to build
+// an agent to hold a place, which is the thing this design exists to avoid.
+func (r *Registry) Register(ctx context.Context, byAgentID string, spec Spec) (Agent, error) {
+	if ctx == nil {
+		return Agent{}, ErrNilContext
+	}
+	if err := ctx.Err(); err != nil {
+		return Agent{}, err
+	}
+	if byAgentID != r.mainID {
+		return Agent{}, fmt.Errorf("%w: %q tried to register %q", ErrNotMain, byAgentID, spec.Name)
+	}
+	agentID := strings.TrimSpace(spec.AgentID)
+	if agentID == "" {
+		agentID = fmt.Sprintf("sub-%d", len(r.agents))
+	}
+	spec.AgentID = agentID
+	spec.ParentID = byAgentID
+
+	r.mu.Lock()
+	if _, exists := r.agents[agentID]; exists {
+		r.mu.Unlock()
+		return Agent{}, fmt.Errorf("subagent: the agent %q already exists", agentID)
+	}
+	if r.maxAgents > 0 && len(r.agents) >= r.maxAgents {
+		r.mu.Unlock()
+		return Agent{}, fmt.Errorf("subagent: the registry already holds its maximum of %d agents", r.maxAgents)
+	}
+	agent := Agent{
+		ID:        agentID,
+		Name:      spec.Name,
+		ParentID:  byAgentID,
+		State:     StateStarting,
+		Tools:     append([]string(nil), spec.Tools...),
+		CreatedAt: timeNow(),
+		UpdatedAt: timeNow(),
+	}
+	r.agents[agentID] = agent
+	r.mu.Unlock()
+	if r.broker != nil {
+		if err := r.broker.Register(agentID); err != nil {
+			r.mu.Lock()
+			delete(r.agents, agentID)
+			r.mu.Unlock()
+			r.broker.Unregister(agentID)
+			return Agent{}, err
+		}
+	}
+	return agent, nil
 }
 
 // SetState records an agent's state.
