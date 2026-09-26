@@ -109,25 +109,56 @@ func startPlatform(ctx context.Context, engine *Engine, argv, env []string, dir 
 	command := exec.CommandContext(ctx, bwrap, args...)
 	command.Env = append([]string(nil), env...)
 	command.Dir = dir
-	stdin, err := command.StdinPipe()
+	// The pipes are made here rather than with Cmd.StdoutPipe, which closes the
+	// reading end as soon as Wait sees the process exit. Whatever the command wrote
+	// and nobody had read yet is discarded at that point, so a process that exits
+	// promptly can report a clean exit code and no output at all. That is not a
+	// race anyone should have to reason about, and a language server that answers
+	// and exits would hit it every time.
+	//
+	// Holding the reading end here also means Wait has no opinion about it, so a
+	// caller reading incrementally gets every byte the process wrote.
+	stdout, stdoutWriter, err := os.Pipe()
 	if err != nil {
 		_ = cleanupTemp()
 		return nil, err
 	}
-	stdout, err := command.StdoutPipe()
+	stderr, stderrWriter, err := os.Pipe()
 	if err != nil {
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
 		_ = cleanupTemp()
 		return nil, err
 	}
-	stderr, err := command.StderrPipe()
+	command.Stdout = stdoutWriter
+	command.Stderr = stderrWriter
+	stdinReader, stdin, err := os.Pipe()
 	if err != nil {
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
+		_ = stderr.Close()
+		_ = stderrWriter.Close()
 		_ = cleanupTemp()
 		return nil, err
 	}
+	command.Stdin = stdinReader
 	if err := command.Start(); err != nil {
+		_ = stdinReader.Close()
+		_ = stdin.Close()
+		_ = stdout.Close()
+		_ = stdoutWriter.Close()
+		_ = stderr.Close()
+		_ = stderrWriter.Close()
 		_ = cleanupTemp()
 		return nil, err
 	}
+	// The child holds the reading and writing ends it needs now. Closing this
+	// process's copies is what lets a reader see the end of the stream when the
+	// child is done, and leaving them open is what would keep a reader waiting for a
+	// process that has gone.
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
+	_ = stdinReader.Close()
 	wait := func() (Result, error) {
 		err := command.Wait()
 		code := -1
