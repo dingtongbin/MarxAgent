@@ -144,6 +144,12 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v ./tests/integration
+      - name: Check what the build depends on and under what terms
+        # AGENTS allows only permissive terms, so the terms are read from each
+        # module rather than remembered in a list that drifts.
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/compliance
       - name: Test the context, cache and security parts verbosely
         env:
           CGO_ENABLED: "0"
