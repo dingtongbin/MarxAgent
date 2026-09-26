@@ -227,6 +227,15 @@ func discoverJournals(root string) ([]journalFile, error) {
 			}
 			return walkErr
 		}
+		if strings.HasSuffix(entry.Name(), ".jsonl") && looksLikeJournal(entry.Name(), filepath.Base(filepath.Dir(path))) {
+			// A directory sitting where a journal belongs is a damaged layout.
+			// Skipping it would let a rebuild report success while quietly
+			// leaving a stream out, which is the opposite of what a recovery tool
+			// is for.
+			if entry.IsDir() {
+				return fmt.Errorf("storage: %s is a directory, not a journal", path)
+			}
+		}
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			return nil
 		}
@@ -257,6 +266,20 @@ func discoverJournals(root string) ([]journalFile, error) {
 		return found[first].path < found[second].path
 	})
 	return found, nil
+}
+
+// looksLikeJournal reports whether a name would be a journal, given the
+// directory holding it. It is the same rule discoverJournals applies, factored
+// out so the damaged layout check and the discovery agree.
+func looksLikeJournal(name, directory string) bool {
+	if !strings.HasSuffix(name, ".jsonl") {
+		return false
+	}
+	base := strings.TrimSuffix(name, ".jsonl")
+	if knownStreamKind(base) {
+		return true
+	}
+	return knownStreamKind(directory)
 }
 
 func trimLineEnd(line []byte) []byte {
