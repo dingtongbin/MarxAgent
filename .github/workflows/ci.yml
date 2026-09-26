@@ -42,17 +42,61 @@ jobs:
         run: |
           go mod verify
           go mod tidy -diff
-          go list -m all
-          while IFS= read -r module; do
-            case "$module" in
-              github.com/modelcontextprotocol/go-sdk|go.yaml.in/yaml/v3|github.com/SivanCola/windows-sandbox|github.com/google/jsonschema-go|github.com/segmentio/asm|github.com/segmentio/encoding|github.com/yosida95/uritemplate/v3|github.com/golang-jwt/jwt/v5|github.com/google/go-cmp|cloud.google.com/go/compute/metadata|golang.org/x/oauth2|golang.org/x/sync|golang.org/x/sys|golang.org/x/time|golang.org/x/tools)
-                ;;
-              *)
-                printf 'Unapproved Go module: %s\n' "$module"
-                exit 1
-                ;;
-            esac
-          done < <(go list -m -f '{{.Path}}' all | tail -n +2)
+          # Which module identities may appear at all. This is a supply chain
+          # decision and not a licence one: tests/compliance reads the terms of
+          # every module that reaches the build, while this says what is allowed to
+          # be in the graph, including the ones only the graph carries.
+          #
+          # The comparison is a diff in both directions on purpose. A module that
+          # arrived without a line here is caught, and so is a line left behind by a
+          # dependency that went away, because an approved name that nothing uses is
+          # a decision nobody is looking at any more.
+          cat > /tmp/approved-modules.txt <<'MODULES'
+            cloud.google.com/go/compute/metadata
+            github.com/SivanCola/windows-sandbox
+            github.com/dustin/go-humanize
+            github.com/golang-jwt/jwt/v5
+            github.com/google/go-cmp
+            github.com/google/jsonschema-go
+            github.com/google/pprof
+            github.com/google/uuid
+            github.com/hashicorp/golang-lru/v2
+            github.com/mattn/go-isatty
+            github.com/modelcontextprotocol/go-sdk
+            github.com/ncruces/go-strftime
+            github.com/remyoudompheng/bigfft
+            github.com/segmentio/asm
+            github.com/segmentio/encoding
+            github.com/yosida95/uritemplate/v3
+            go.yaml.in/yaml/v3
+            golang.org/x/exp
+            golang.org/x/mod
+            golang.org/x/oauth2
+            golang.org/x/sync
+            golang.org/x/sys
+            golang.org/x/time
+            golang.org/x/tools
+            modernc.org/cc/v4
+            modernc.org/ccgo/v4
+            modernc.org/fileutil
+            modernc.org/gc/v2
+            modernc.org/gc/v3
+            modernc.org/goabi0
+            modernc.org/libc
+            modernc.org/mathutil
+            modernc.org/memory
+            modernc.org/opt
+            modernc.org/sortutil
+            modernc.org/sqlite
+            modernc.org/strutil
+            modernc.org/token
+          MODULES
+          sed -i 's/^ *//' /tmp/approved-modules.txt
+          go list -m -f '{{.Path}}' all | tail -n +2 | sort > /tmp/modules.txt
+          if ! diff -u /tmp/approved-modules.txt /tmp/modules.txt; then
+            printf 'The module set and the approved list disagree. A module with no line is unapproved; a line with no module is stale.\n'
+            exit 1
+          fi
       - name: Enforce CGO and L1 dependency boundaries
         shell: bash
         run: |
@@ -154,15 +198,24 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v ./internal/engine/context ./internal/engine/cache ./internal/engine/security
-      - name: Test the subagent, logging, language server and wiki parts verbosely
+      # One part per step, because a bundled step reports one failure for four
+      # parts and the other three go unchecked until somebody reads the log.
+      - name: Test the subagent part verbosely
         env:
           CGO_ENABLED: "0"
-        run: >-
-          go test -count=1 -v
-          ./internal/engine/subagent
-          ./internal/engine/logging
-          ./internal/engine/lsp
-          ./internal/engine/wiki
+        run: go test -count=1 -v ./internal/engine/subagent
+      - name: Test the logging part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/logging
+      - name: Test the language server part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/lsp
+      - name: Test the wiki part verbosely
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./internal/engine/wiki
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
