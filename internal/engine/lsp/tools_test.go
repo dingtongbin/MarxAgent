@@ -25,6 +25,10 @@ func newTooledPool(t *testing.T) *Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A failing test says why its reader ended, so an intermittent failure in this
+	// package names its own cause instead of only reporting that the server was
+	// gone.
+	watchCrashes(t, client)
 	t.Cleanup(func() { _ = client.Close() })
 	pool, err := NewPool(client)
 	if err != nil {

@@ -260,6 +260,28 @@ func (s *fakeServer) methodsHandled() []string {
 	return names
 }
 
+// watchCrashes reports why a reader ended, if the test failed.
+//
+// A client that reports only "the language server is not running" leaves the
+// reader guessing, because that answer is the same whether the server exited,
+// the stream was torn down underneath it, or a read failed for a reason nobody has
+// seen yet. The client keeps both records, so a failing test hands them over and
+// the next occurrence is information rather than a mystery.
+func watchCrashes(t *testing.T, client *Client) {
+	t.Helper()
+	t.Cleanup(func() {
+		if !t.Failed() {
+			return
+		}
+		if crash := client.LastCrash(); crash != nil {
+			t.Logf("the reader ended: %v", crash.Err)
+		}
+		if reason := client.LastReadError(); reason != "" {
+			t.Logf("the last read error was: %s", reason)
+		}
+	})
+}
+
 // workingStarter hands out a process with a healthy server attached. Every launch
 // gets its own server, because a server shared between a launch and the one that
 // replaced it is how a test ends up measuring the harness rather than the client.
@@ -873,6 +895,7 @@ func TestTraceRecordsBothDirections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	watchCrashes(t, client)
 	defer client.Close()
 	if _, err := client.Request(context.Background(), MethodTextDocumentHover, nil); err != nil {
 		t.Fatal(err)
