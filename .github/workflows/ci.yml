@@ -140,10 +140,15 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v ./internal/engine/context ./internal/engine/cache ./internal/engine/security
-      - name: Test the subagent, logging and language server parts verbosely
+      - name: Test the subagent, logging, language server and wiki parts verbosely
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 -v ./internal/engine/subagent ./internal/engine/logging ./internal/engine/lsp
+        run: >-
+          go test -count=1 -v
+          ./internal/engine/subagent
+          ./internal/engine/logging
+          ./internal/engine/lsp
+          ./internal/engine/wiki
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
