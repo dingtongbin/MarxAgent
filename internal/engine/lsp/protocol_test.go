@@ -6,9 +6,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -335,42 +335,157 @@ func (s *pipeStarter) track(t *testing.T, build serverFactory) {
 
 // pipeProcess is a sandbox.Process backed by in-memory pipes.
 type pipeProcess struct {
-	stdin  *os.File
-	stdout *os.File
-	client *os.File
-	server *os.File
+	stdin  *writeHalf
+	stdout *readHalf
+	client *writeHalf
+	server *readHalf
 	closed chan struct{}
-	once   bool
+	once   sync.Once
 }
 
 // newPipeProcess builds the two directions of a pipe pair: what the client writes
 // is what the server reads, and what the server writes is what the client reads.
 //
-// Real operating system pipes are used rather than io.Pipe because a real pipe
-// buffers, and a test that depends on a write blocking until a reader arrives is
-// measuring the harness's scheduling rather than the client's behaviour. A real
-// pipe is also closer to what a language server actually gets.
+// The streams are in memory rather than operating system pipes, and the reason is
+// a capability rather than a convenience. An operating system pipe gives both
+// holders a file descriptor, so a fake server can close the descriptor the client
+// is reading, and a client whose read end is closed underneath it reports a file
+// that is already closed. A real language server is a separate process holding
+// only its own end of the pipe and physically cannot reach the client's, and when
+// it exits the client sees the end of the stream. A harness that can produce a
+// failure the product cannot have is a harness that teaches the wrong lesson, and
+// it does so at random, which is worse.
+//
+// Buffering is what keeps this from deadlocking. An unbuffered pipe makes a write
+// wait for a reader, so a test ends up measuring the order two goroutines happen
+// to be scheduled in rather than what the client does with the bytes.
 func newPipeProcess() *pipeProcess {
-	clientReader, clientWriter, err := os.Pipe()
-	if err != nil {
-		panic("lsp test: client pipe: " + err.Error())
-	}
-	serverReader, serverWriter, err := os.Pipe()
-	if err != nil {
-		panic("lsp test: server pipe: " + err.Error())
-	}
+	// Two streams, four ends: what the client writes is what the server reads, and
+	// what the server writes is what the client reads.
+	toServer := newMemoryStream()
+	toClient := newMemoryStream()
 	return &pipeProcess{
-		stdin:  clientWriter,
-		stdout: serverReader,
-		client: serverWriter,
-		server: clientReader,
+		stdin:  &writeHalf{stream: toServer},
+		server: &readHalf{stream: toServer},
+		client: &writeHalf{stream: toClient},
+		stdout: &readHalf{stream: toClient},
 		closed: make(chan struct{}),
 	}
 }
 
+// memoryStream is one direction of a connection: bytes queue up for a reader, a
+// reader drains them, and the two ends are closed independently the way the ends
+// of a pipe are.
+type memoryStream struct {
+	mu       sync.Mutex
+	ready    *sync.Cond
+	buffered []byte
+	// wroteEndClosed is the writing half giving up, which the reader sees as the
+	// end of the stream.
+	wroteEndClosed bool
+	// readEndGone is the reading half going away, which the writer sees as a broken
+	// pipe rather than a message that was delivered.
+	readEndGone bool
+}
+
+func newMemoryStream() *memoryStream {
+	stream := &memoryStream{}
+	stream.ready = sync.NewCond(&stream.mu)
+	return stream
+}
+
+// Write queues bytes, waiting for room when the buffer is full.
+//
+// It never waits for a reader to arrive, because a write that blocks until the
+// other side happens to be scheduled is a test of the scheduler.
+func (s *memoryStream) Write(payload []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readEndGone {
+		return 0, errBrokenPipe
+	}
+	written := 0
+	for written < len(payload) {
+		for len(s.buffered) >= memoryStreamLimit && !s.readEndGone && !s.wroteEndClosed {
+			s.ready.Wait()
+		}
+		if s.readEndGone {
+			return written, errBrokenPipe
+		}
+		room := memoryStreamLimit - len(s.buffered)
+		if room > len(payload)-written {
+			room = len(payload) - written
+		}
+		s.buffered = append(s.buffered, payload[written:written+room]...)
+		written += room
+		s.ready.Broadcast()
+	}
+	return written, nil
+}
+
+// Read takes what has been written, and reports the end of the stream once the
+// writing half is closed and nothing is left.
+func (s *memoryStream) Read(target []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.buffered) == 0 {
+		if s.wroteEndClosed || s.readEndGone {
+			return 0, io.EOF
+		}
+		s.ready.Wait()
+	}
+	taken := copy(target, s.buffered)
+	s.buffered = s.buffered[taken:]
+	s.ready.Broadcast()
+	return taken, nil
+}
+
+// CloseWrite ends the stream for a reader, which is what a process exiting does.
+func (s *memoryStream) CloseWrite() error {
+	s.mu.Lock()
+	s.wroteEndClosed = true
+	s.ready.Broadcast()
+	s.mu.Unlock()
+	return nil
+}
+
+// CloseRead abandons the stream, which is what killing a process does: a writer
+// finds out at once instead of filling a buffer nobody will ever drain.
+func (s *memoryStream) CloseRead() error {
+	s.mu.Lock()
+	s.readEndGone = true
+	s.buffered = nil
+	s.ready.Broadcast()
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *memoryStream) Close() error {
+	return s.CloseWrite()
+}
+
+// memoryStreamLimit bounds what a test can queue, so a runaway writer is caught
+// rather than turning into a slow leak.
+const memoryStreamLimit = 1 << 20
+
+// errBrokenPipe is what a write reports once the reader has gone.
+var errBrokenPipe = errors.New("lsp test: the reader is gone")
+
 func (p *pipeProcess) Stdin() io.WriteCloser { return p.stdin }
 func (p *pipeProcess) Stdout() io.ReadCloser { return p.stdout }
 func (p *pipeProcess) Stderr() io.ReadCloser { return io.NopCloser(strings.NewReader("")) }
+
+// writeHalf is the writing end of a stream, which is what a process's input is.
+type writeHalf struct{ stream *memoryStream }
+
+func (w *writeHalf) Write(payload []byte) (int, error) { return w.stream.Write(payload) }
+func (w *writeHalf) Close() error                      { return w.stream.CloseWrite() }
+
+// readHalf is the reading end of a stream, which is what a process's output is.
+type readHalf struct{ stream *memoryStream }
+
+func (r *readHalf) Read(target []byte) (int, error) { return r.stream.Read(target) }
+func (r *readHalf) Close() error                    { return r.stream.CloseRead() }
 
 // Wait blocks until the process is closed.
 func (p *pipeProcess) Wait() (sandbox.Result, error) {
@@ -378,17 +493,17 @@ func (p *pipeProcess) Wait() (sandbox.Result, error) {
 	return sandbox.Result{}, nil
 }
 
-// Close shuts both directions.
+// Close shuts both directions. It is the client letting a server go, so it ends
+// the client's input for the server to notice and abandons its output, which is
+// what a client does with a process it is finished with.
 func (p *pipeProcess) Close() error {
-	if p.once {
-		return nil
-	}
-	p.once = true
-	close(p.closed)
-	_ = p.stdin.Close()
-	_ = p.client.Close()
-	_ = p.server.Close()
-	_ = p.stdout.Close()
+	p.once.Do(func() {
+		close(p.closed)
+		_ = p.stdin.Close()
+		_ = p.client.Close()
+		_ = p.server.Close()
+		_ = p.stdout.Close()
+	})
 	return nil
 }
 
@@ -1147,4 +1262,106 @@ func TestTheHarnessLeaksNothingWhenATestEnds(t *testing.T) {
 	}
 	t.Fatalf("goroutines went from %d to %d across five rounds; the servers are not being stopped",
 		before, runtime.NumGoroutine())
+}
+
+// The harness must not be able to produce a failure the product cannot have. A
+// language server is a separate process holding only its own end of the pipe, so
+// it cannot reach the client's read end; when it exits, the client sees the end of
+// the stream. Operating system pipes gave the fake server both ends, which is how a
+// handshake could fail with a file that was already closed.
+func TestTheHarnessCannotCloseTheClientsReadEnd(t *testing.T) {
+	process := newPipeProcess()
+	// Everything a fake server holds: the end it reads and the end it writes.
+	serverRead, serverWrite := process.server, process.client
+	_ = serverWrite.Close()
+	// The server is gone. The client must see the end of its stream, not a closed
+	// file, and it must still be able to shut the process down.
+	buffer := make([]byte, 1)
+	if _, err := process.Stdout().Read(buffer); !errors.Is(err, io.EOF) {
+		t.Fatalf("the client read %v, want the end of the stream", err)
+	}
+	_ = serverRead.Close()
+	if err := process.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// A client that has let the server go cannot write to it, and is told so rather
+	// than blocking on a reader that will never come back.
+	if _, err := process.Stdin().Write([]byte("Content-Length: 2\n\n{}")); err == nil {
+		t.Fatal("a write to a process that was closed reported success")
+	}
+}
+
+// A stream that is closed for writing hands the reader the end of the stream, and
+// one that is abandoned hands the writer a broken pipe. The two are different and
+// the client tells them apart, so the harness has to as well.
+func TestAMemoryStreamEndsTheWayAPipeDoes(t *testing.T) {
+	t.Run("closing the writing end ends the reader's stream", func(t *testing.T) {
+		stream := newMemoryStream()
+		if _, err := stream.Write([]byte("hello")); err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.CloseWrite(); err != nil {
+			t.Fatal(err)
+		}
+		buffer := make([]byte, 16)
+		read, err := stream.Read(buffer)
+		if err != nil || string(buffer[:read]) != "hello" {
+			t.Fatalf("read %d %q, err %v: what was written must still be readable", read, buffer[:read], err)
+		}
+		if _, err := stream.Read(buffer); !errors.Is(err, io.EOF) {
+			t.Fatalf("err = %v, want the end of the stream", err)
+		}
+	})
+
+	t.Run("a reader that is gone breaks the writer", func(t *testing.T) {
+		stream := newMemoryStream()
+		if err := stream.CloseRead(); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := stream.Write([]byte("hello")); !errors.Is(err, errBrokenPipe) {
+			t.Fatalf("err = %v, want a broken pipe", err)
+		}
+	})
+
+	t.Run("a write does not wait for a reader to arrive", func(t *testing.T) {
+		stream := newMemoryStream()
+		// Nothing is reading. A write that waited for a reader would be a test of
+		// the scheduler rather than of the client, and an unbuffered pipe does
+		// exactly that.
+		done := make(chan error, 1)
+		go func() {
+			_, err := stream.Write(make([]byte, 4096))
+			done <- err
+		}()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a write waited for a reader that never came")
+		}
+	})
+
+	t.Run("a reader waits for a writer and is woken when it stops", func(t *testing.T) {
+		stream := newMemoryStream()
+		got := make(chan string, 1)
+		go func() {
+			buffer := make([]byte, 16)
+			read, _ := stream.Read(buffer)
+			got <- string(buffer[:read])
+		}()
+		time.Sleep(10 * time.Millisecond)
+		if _, err := stream.Write([]byte("wake")); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case text := <-got:
+			if text != "wake" {
+				t.Fatalf("read %q", text)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a blocked reader was not woken by a write")
+		}
+	})
 }
