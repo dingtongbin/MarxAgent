@@ -11,6 +11,7 @@
 package subagent
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -126,6 +127,38 @@ func (m *Mailbox) Receive() (Message, bool) {
 		return Message{}, false
 	}
 	return message.Clone(), true
+}
+
+// ReceiveWithinContext returns the next message, giving up after the wait or as soon
+// as the caller is done, whichever comes first.
+//
+// It exists because ReceiveWithin cannot be stopped from outside. A caller that hands
+// over a deadline and then has it cut short by a cancelled turn would otherwise go on
+// waiting for a wait it no longer has any reason to serve, and a turn that was
+// abandoned would leave a goroutine behind for as long as it asked to wait.
+func (m *Mailbox) ReceiveWithinContext(ctx context.Context, wait time.Duration) (Message, bool) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return Message{}, false
+	}
+	if wait <= 0 {
+		return m.ReceiveWithin(0)
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
+	select {
+	case message, ok := <-m.mailbox:
+		if !ok {
+			return Message{}, false
+		}
+		return message.Clone(), true
+	case <-timer.C:
+		return Message{}, false
+	case <-ctx.Done():
+		return Message{}, false
+	}
 }
 
 // ReceiveWithin returns the next message, giving up after the wait.
