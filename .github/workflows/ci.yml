@@ -163,15 +163,26 @@ jobs:
       - name: Test
         env:
           CGO_ENABLED: "0"
-        run: go test -count=1 ./...
-      # The storage suites run without coverage instrumentation on purpose. The
-      # pure Go SQLite driver intermittently corrupts memory under -coverprofile
-      # and -race on Windows and Go 1.27, roughly one run in sixteen, dying inside
-      # modernc.org/libc. Plain go test is stable, the fault was not reproducible
-      # from a driver only or schema only harness, and it survived every driver
-      # and libc version tried, so it is not this repository's code. The suites
-      # therefore run for real on all three platforms but storage coverage is
-      # not a gate, while the other packages keep theirs.
+        # The storage engine is left out of the parallel run and given its own below.
+        # The pure Go SQLite driver corrupts the Go runtime under memory pressure: it
+        # dies inside modernc.org/libc with a nil P in the scheduler, which is not a
+        # panic and cannot be recovered. It needs the machine busy, so a package on
+        # its own has never done it and a full parallel run does it about one time in
+        # six to eight. Running it alone is what removes the condition, and isolating
+        # it means the fault is reported against the part that has it instead of
+        # taking every other package's result with it.
+        run: go test -count=1 $(go list ./... | grep -v '/internal/engine/storage$')
+      - name: Test the storage engine on its own
+        env:
+          CGO_ENABLED: "0"
+        # -p 1 because the fault needs a busy machine. This is not a claim that the
+        # driver is sound under load, only that a test run is not a way to find out
+        # at the cost of everything else.
+        run: go test -count=1 -p 1 ./internal/engine/storage
+      # The storage suites run without coverage instrumentation for a second reason
+      # on top of the one above. Coverage makes the allocator work harder, which is
+      # the same pressure, so storage coverage is not a gate while the other packages
+      # keep theirs.
       - name: Test the durability suites
         env:
           CGO_ENABLED: "0"
@@ -354,7 +365,15 @@ jobs:
       - name: Run race detector
         env:
           CGO_ENABLED: "1"
-        run: go test -race -count=1 ./...
+        # Storage is excluded here for the same reason it is excluded from the plain
+        # run, and the race detector makes the reason worse rather than better: it
+        # adds bookkeeping to every allocation, which is the pressure the driver
+        # cannot survive.
+        run: go test -race -count=1 $(go list ./... | grep -v '/internal/engine/storage$')
+      - name: Run race detector on the storage engine alone
+        env:
+          CGO_ENABLED: "1"
+        run: go test -race -count=1 -p 1 ./internal/engine/storage
 
   coverage:
     name: L1 coverage
