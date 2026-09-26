@@ -132,6 +132,10 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v -run 'Test(Scope|Recover|Clean|Write|Journal|Audit|Checkpoint|FileLock|Sink)' ./internal/engine/storage
+      - name: Test the crash contract
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/durability
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
