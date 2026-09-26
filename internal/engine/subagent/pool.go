@@ -132,6 +132,9 @@ type Slot struct {
 	// result is what the last task produced, kept so the main core can read it after
 	// the fact instead of only being told at the moment it happened.
 	result TaskResult
+	// refused is what the last task's template asked for and was not given, which is
+	// a template quietly reaching for something it may not have.
+	refused []string
 }
 
 // AgentBuilder turns a template and a slot into a core agent.
@@ -615,7 +618,10 @@ func (p *Pool) Start(ctx context.Context, byAgentID string, task Task) (SlotReco
 func (p *Pool) execute(ctx context.Context, slot *Slot, template Template, task Task, watchers chan<- core.Event) TaskResult {
 	agent, err := p.config.Builder.Build(ctx, template, slot)
 	if err != nil {
-		failure := fmt.Errorf("subagent: build the agent for %s: %w", slot.ID, err)
+		// The builder says which slot and what was wrong with it, so this only says
+		// that the task could not be run at all. Saying it again here would read as
+		// though two separate things had gone wrong.
+		failure := fmt.Errorf("subagent: cannot run a task on %s: %w", slot.ID, err)
 		slot.recordFailure(task, failure, 0)
 		return TaskResult{
 			Slot: slot.ID, AgentID: slot.ID, Summary: task.Summary,

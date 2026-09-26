@@ -35,6 +35,10 @@ type AgentView struct {
 	Recorded State `json:"recorded_state"`
 	// Tools is what it may use, which its template decided and nobody else may widen.
 	Tools []string `json:"tools,omitempty"`
+	// Refused is what the template asked for and was not given. A template asking for
+	// a tool a sub agent may never have is worth seeing, because the request was
+	// turned down rather than met and nothing else would say so.
+	Refused []string `json:"refused_tools,omitempty"`
 	// Summary is what it was last asked to do and what it made of it.
 	Summary string `json:"summary,omitempty"`
 	// Err is why the last task failed.
@@ -108,9 +112,15 @@ func (p *Pool) View() View {
 	// way round.
 	p.mu.RLock()
 	slots := make([]SlotRecord, 0, len(p.order))
+	refused := make(map[string][]string, len(p.order))
 	for _, id := range p.order {
-		if slot, ok := p.slots[id]; ok {
-			slots = append(slots, slot.snapshot())
+		slot, ok := p.slots[id]
+		if !ok {
+			continue
+		}
+		slots = append(slots, slot.snapshot())
+		if names := slot.refusedTools(); len(names) > 0 {
+			refused[id] = names
 		}
 	}
 	p.mu.RUnlock()
@@ -141,6 +151,9 @@ func (p *Pool) View() View {
 		// them and the registry is where a template's decision was filed. Reading them
 		// from there rather than copying them onto the slot keeps one place that
 		// decides what a sub agent may reach.
+		if names := refused[slot.ID]; len(names) > 0 {
+			entry.Refused = names
+		}
 		if agent, ok := recorded[slot.ID]; ok {
 			entry.Name = agent.Name
 			entry.Recorded = agent.State
@@ -221,6 +234,13 @@ func (p *Pool) Take(ctx context.Context, byAgentID, agentID string, limit int) (
 		taken = append(taken, message)
 	}
 	return taken, nil
+}
+
+// refusedTools reports what the last build turned down, under the slot's lock.
+func (s *Slot) refusedTools() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.refused...)
 }
 
 // WaitMessages waits for a message to arrive for a sub agent, which is how a sub
