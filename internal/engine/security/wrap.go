@@ -80,6 +80,30 @@ func WrapToolResult(output []byte) ([]byte, error) {
 	return []byte(WrapToolOutput(string(output))), nil
 }
 
+// WrapToolResultJSON is WrapToolResult in the form a tool result can actually
+// hold.
+//
+// A result is carried as a json.RawMessage into the event stream, the transcript
+// and the journal, so an envelope assigned to one has to be JSON or the record
+// cannot be written down. The envelope is therefore returned as a JSON string:
+// the markers stay verbatim inside the string, so a payload carrying the
+// envelope's own closing tag still cannot escape it, and the value is a
+// document that marshals.
+//
+// This is the function an assembly wants. Calling WrapToolResult and assigning
+// its text to a result is the mistake this exists to make impossible to keep.
+func WrapToolResultJSON(output []byte) (json.RawMessage, error) {
+	wrapped, err := WrapToolResult(output)
+	if err != nil {
+		return nil, err
+	}
+	encoded, err := json.Marshal(string(wrapped))
+	if err != nil {
+		return nil, fmt.Errorf("security: encode the wrapped tool result: %w", err)
+	}
+	return json.RawMessage(encoded), nil
+}
+
 // isPlainText reports whether output is a bare word rather than a structure, where
 // quoting it as a json string would be noise in the transcript.
 func isPlainText(output []byte) bool {

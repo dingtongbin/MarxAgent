@@ -130,10 +130,23 @@ func (a *agent) executeLoop(ctx context.Context, input Input, events chan<- Even
 		if err != nil {
 			return err
 		}
-		toolCalls, ok = hookedCalls.([]ContentBlock)
+		accepted, ok := hookedCalls.([]ContentBlock)
 		if !ok {
 			return fmt.Errorf("core: tool_call_received hook returned %T, want []ContentBlock", hookedCalls)
 		}
+		// The hook answered with the shape it was handed, so a block that is not a
+		// call is a broken hook rather than a refusal, and it is reported as one. An
+		// empty answer is the legitimate way to refuse everything.
+		if err := validateToolCalls(accepted); err != nil {
+			return fmt.Errorf("core: tool_call_received hook returned an invalid call: %w", err)
+		}
+		// A gate may refuse a call by dropping it from the list, but the assistant
+		// message already carries its tool_use block and every one of the three API
+		// formats requires an answer for each: a tool_use with no tool_result is a
+		// rejected request, so a refusal that goes unanswered would fail the whole
+		// turn on the next call rather than merely skipping the tool. The refused
+		// calls are put back as failures carrying the reason the gate gave.
+		toolCalls = reconcileRefusedCalls(toolCalls, accepted)
 		if err := validateToolCalls(toolCalls); err != nil {
 			return err
 		}
@@ -218,13 +231,49 @@ func (a *agent) consumeStream(
 	}
 }
 
+// reconcileRefusedCalls merges a gate's answer back into the calls the model made.
+//
+// A hook that rewrites a call has its version kept, because a gate may correct
+// arguments as well as refuse. A hook that drops a call has it put back as a
+// failure, because the assistant message has already been appended with that
+// call in it and all three API formats require one result per call. A gate that
+// wants to say why may keep the call and mark it refused with its own words, and
+// that version is used as it stands.
+func reconcileRefusedCalls(original, accepted []ContentBlock) []ContentBlock {
+	byID := make(map[string]ContentBlock, len(accepted))
+	for _, call := range accepted {
+		byID[call.ToolCallID] = call
+	}
+	merged := make([]ContentBlock, 0, len(original))
+	for _, call := range original {
+		kept, exists := byID[call.ToolCallID]
+		if !exists {
+			refusal := call
+			refusal.IsError = true
+			refusal.Output = json.RawMessage(strconv.Quote(
+				fmt.Sprintf("tool %q was refused by policy before it ran", call.ToolName)))
+			kept = refusal
+		}
+		merged = append(merged, kept)
+	}
+	return merged
+}
+
 func (a *agent) runTools(ctx context.Context, calls []ContentBlock) ([]ToolResult, error) {
+	// A call a gate already refused is not offered to a tool, but it still passes
+	// through the execution hooks, because an attempt that was stopped is exactly
+	// what an audit has to be able to show.
+	refusals := make(map[int]ContentBlock)
 	invocations := make([]ToolInvocation, len(calls))
 	for index, call := range calls {
 		invocations[index] = ToolInvocation{
 			ToolCallID: call.ToolCallID,
 			ToolName:   call.ToolName,
 			Input:      cloneRawJSON(call.Input),
+		}
+		if call.IsError {
+			refusals[index] = call
+			continue
 		}
 		hooked, err := a.hooks.trigger(ctx, HookPreToolExec, invocations[index])
 		if err != nil {
@@ -243,7 +292,7 @@ func (a *agent) runTools(ctx context.Context, calls []ContentBlock) ([]ToolResul
 		}
 	}
 
-	results := a.executeToolsConcurrently(ctx, invocations)
+	results := a.executeToolsConcurrently(ctx, invocations, refusals)
 	hooked, err := a.hooks.trigger(ctx, HookPostToolExec, results)
 	if err != nil {
 		return results, err
@@ -275,6 +324,7 @@ func (a *agent) runTools(ctx context.Context, calls []ContentBlock) ([]ToolResul
 func (a *agent) executeToolsConcurrently(
 	ctx context.Context,
 	invocations []ToolInvocation,
+	refusals map[int]ContentBlock,
 ) []ToolResult {
 	results := make([]ToolResult, len(invocations))
 	var waitGroup sync.WaitGroup
@@ -282,11 +332,30 @@ func (a *agent) executeToolsConcurrently(
 	for index := range invocations {
 		go func(resultIndex int) {
 			defer waitGroup.Done()
+			if refusal, stopped := refusals[resultIndex]; stopped {
+				results[resultIndex] = refusedToolResult(invocations[resultIndex], refusal)
+				return
+			}
 			results[resultIndex] = a.executeTool(ctx, invocations[resultIndex])
 		}(index)
 	}
 	waitGroup.Wait()
 	return results
+}
+
+// refusedToolResult reports a call a gate stopped, carrying the words the gate
+// used. A refusal without a reason teaches the model nothing, because it cannot
+// tell a policy it should respect from a failure worth retrying.
+func refusedToolResult(invocation ToolInvocation, refusal ContentBlock) ToolResult {
+	reason := fmt.Sprintf("tool %q was refused by policy before it ran", invocation.ToolName)
+	if text, unquoted := strconv.Unquote(string(refusal.Output)); unquoted == nil && text != "" {
+		reason = text
+	}
+	result := errorToolResult(invocation, errors.New(reason))
+	if len(refusal.Output) > 0 {
+		result.Output = cloneRawJSON(refusal.Output)
+	}
+	return result
 }
 
 func (a *agent) executeTool(ctx context.Context, invocation ToolInvocation) (result ToolResult) {
@@ -556,6 +625,11 @@ func validateToolResult(result ToolResult) error {
 	if len(result.Output) == 0 {
 		return errors.New("core: tool result output must not be empty")
 	}
+	// The output has to be valid JSON because it is carried as a json.RawMessage
+	// into the event stream, the transcript and the journal, and a value that
+	// cannot be marshalled is a record that cannot be written down. A hook that
+	// wants to wrap a result in an untrusted envelope therefore has to produce
+	// JSON, which the security part does for this reason.
 	if !json.Valid(result.Output) {
 		return errors.New("core: tool result output must be valid JSON")
 	}

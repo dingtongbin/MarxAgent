@@ -136,6 +136,14 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v ./tests/durability
+      - name: Test the seams between parts
+        # These are the promises no single package can keep on its own: a
+        # compaction that invalidates the cached prefix, a tool result that
+        # reaches the model as untrusted data, and a refused call that still
+        # answers the provider. A part can pass alone and break all three.
+        env:
+          CGO_ENABLED: "0"
+        run: go test -count=1 -v ./tests/integration
       - name: Test the context, cache and security parts verbosely
         env:
           CGO_ENABLED: "0"
