@@ -73,8 +73,18 @@ func TestShellArgsResolvesPowerShellAndRejectsMissingShell(t *testing.T) {
 		t.Fatalf("explicit shell ignored: %#v", explicit)
 	}
 	t.Setenv("PATH", "")
-	if _, err := shellArgs(ShellConfig{}, "noop"); err == nil || !strings.Contains(err.Error(), "PowerShell") {
-		t.Fatalf("missing PowerShell error = %v", err)
+	_, err = shellArgs(ShellConfig{}, "noop")
+	if err == nil {
+		t.Fatal("a host with no shell was not reported")
+	}
+	// The complaint has to name what it looked for, because "no shell" alone leaves a
+	// caller with nothing to act on. Both are named because either alone could be the
+	// one that is missing.
+	complaint := strings.ToLower(err.Error())
+	for _, wanted := range []string{"pwsh", "powershell"} {
+		if !strings.Contains(complaint, wanted) {
+			t.Fatalf("the complaint does not name %s: %v", wanted, err)
+		}
 	}
 }
 

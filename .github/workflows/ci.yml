@@ -227,6 +227,33 @@ jobs:
         env:
           CGO_ENABLED: "0"
         run: go test -count=1 -v ./internal/engine/wiki
+      - name: Test the platform package on this host
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          go test -count=1 -v ./internal/engine/platform
+          go test -count=1 -coverprofile=platform-coverage.out ./internal/engine/platform
+          go tool cover -func=platform-coverage.out
+          coverage="$(go tool cover -func=platform-coverage.out | awk '/^total:/ {gsub("%", "", $3); print $3}')"
+          awk -v coverage="$coverage" 'BEGIN { if (coverage + 0 < 90.0) exit 1 }'
+      # The host differences live in build-tagged files, so a mistake in one of them is
+      # invisible until the other system compiles it. Building every promised
+      # combination is what makes a broken Unix file show up on a Windows runner.
+      - name: Build every promised target
+        env:
+          CGO_ENABLED: "0"
+        shell: bash
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do
+            echo "building $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 go build ./...
+          done
+      - name: Upload platform coverage profile
+        uses: actions/upload-artifact@v4
+        with:
+          name: platform-coverage-${{ matrix.os }}
+          path: platform-coverage.out
       - name: Test platform sandbox suites verbosely
         env:
           CGO_ENABLED: "0"
