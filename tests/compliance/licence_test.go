@@ -200,9 +200,11 @@ func runGo(t *testing.T, arguments ...string) (string, error) {
 	// check would pass over the entire project without noticing. Every go command
 	// here therefore runs from the module root.
 	command.Dir = moduleRoot(t)
-	// The build flags are inherited so a guard is not run against a different
-	// dependency set than the one the tests were.
-	command.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	// A guard that reports on the dependency set must not be able to change it, so
+	// the module files are read only. With the default writable mode this test
+	// quietly added entries to go.sum, which is a repository change made by a
+	// command that was only meant to look at one.
+	command.Env = append(os.Environ(), "GOFLAGS=-mod=readonly")
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	stdout, err := command.Output()
