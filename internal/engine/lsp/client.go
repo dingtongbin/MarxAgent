@@ -433,9 +433,9 @@ func (c *Client) readLoop(
 			// and a caller that watched the client recover is exactly the one who most
 			// wants to know it had happened. Only the teardown is conditional.
 			if !errors.Is(err, io.EOF) {
-				c.recordCrash(err)
+				c.recordCrash(generation, err)
 			} else {
-				c.recordCrash(fmt.Errorf("the language server closed its stream"))
+				c.recordCrash(generation, fmt.Errorf("the language server closed its stream"))
 			}
 			waiters, current := c.teardownGeneration(generation)
 			if !current {
@@ -592,9 +592,20 @@ func (c *messageContext) Response() (Message, bool) {
 }
 
 // recordCrash notes that the server went away.
-func (c *Client) recordCrash(cause error) {
+//
+// A reader that has already been replaced says nothing about the connection that
+// replaced it. Its stream was closed on purpose, when the client let the server go,
+// and recording that as a crash would tell the next caller its live server died,
+// spend a restart it did not need, and bound a loop that never happened. This is
+// the same rule teardownGeneration already applies before it clears anything, and
+// it is applied here for the same reason: one rule for a stale reader, not two
+// places where one of them was forgotten.
+func (c *Client) recordCrash(generation int64, cause error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if generation != c.generation {
+		return
+	}
 	// A deliberate shutdown is not a crash, so a reader that ends because the client
 	// stopped does not leave a crash record for a caller to chase.
 	if c.stopped {
