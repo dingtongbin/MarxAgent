@@ -1,0 +1,252 @@
+/*
+ * The folder picker.
+ *
+ * Every colour and every size here comes from the project's tokens, so the dialog is the
+ * same greys as the rest of the window rather than the library's defaults. The library
+ * supplies the behaviour — the rows, the keyboard, the focus ring, the virtualisation —
+ * and this file supplies only how it looks.
+ */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.5);
+  z-index: 1000;
+}
+
+/* One layer above the overlay. Without it the backdrop covers the dialog and the whole
+   window — the dialog included — goes grey and stops responding to clicks. */
+.content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  width: min(620px, calc(100vw - 48px));
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-lg);
+  box-shadow: var(--kc-shadow-2);
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid var(--kc-border);
+}
+
+.title {
+  flex: 1;
+  font-size: var(--kc-font-lg);
+  font-weight: 650;
+  color: var(--kc-text);
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text-dim);
+}
+.close:hover {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+}
+
+.err {
+  padding: 8px 16px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-danger);
+  background: var(--kc-danger-bg);
+  border-bottom: 1px solid var(--kc-danger);
+}
+
+/* The tree's area. Its height is fixed so that a directory with thousands of entries
+   scrolls here rather than pushing the buttons off the bottom of the screen, and so
+   that the buttons do not move when a different directory is open. */
+.body {
+  position: relative;
+  height: 340px;
+  min-height: 0;
+  padding: 6px;
+}
+
+.spinning {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--kc-text-faint);
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 14px;
+  border-top: 1px solid var(--kc-border);
+}
+
+.ghost {
+  padding: 6px 14px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-sm);
+}
+.ghost:hover {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+}
+
+.primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--kc-btn-bg);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-btn-bg);
+  color: var(--kc-btn-fg);
+  font-size: var(--kc-font-sm);
+}
+.primary:hover:not(:disabled) {
+  background: var(--kc-btn-hover);
+}
+.primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The path being chosen. A tree shows names and the thing being chosen is a path, and
+   a name is not a path — so the path is said here, in full, where it can be copied. */
+.picked {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-dim);
+}
+
+/*
+ * The tree's own appearance.
+ *
+ * The library ships no stylesheet at all: it hands over rows carrying their role, their
+ * level, whether they are selected and whether they are open, and draws nothing. So
+ * everything visible here is written here — including the selected and hovered states,
+ * which are read off the attributes the library does set rather than off a class it
+ * never adds.
+ */
+.tree {
+  outline: none;
+}
+
+.rowFocus {
+  box-shadow: inset 0 0 0 1px var(--kc-border-strong);
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  padding: 0 6px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+  cursor: pointer;
+  user-select: none;
+}
+
+.row:hover {
+  background: var(--kc-hover);
+}
+
+/* Where the keyboard is. Drawn on the row rather than as a ring around the tree,
+   because the keyboard moves between rows and the ring has to move with it. */
+.row[data-focused] {
+  box-shadow: inset 0 0 0 1px var(--kc-border-strong);
+}
+
+/* The row that is the folder being chosen. The same grey as a hover rather than an
+   accent: this window keeps colour for state, and being the current pick is a fact
+   about the path at the bottom rather than something that has gone wrong. */
+.row[aria-selected="true"] {
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+}
+
+/* The library moves focus itself when the keyboard moves through the tree, so the ring
+   is drawn on the element it focuses rather than on the tree around it. */
+.row:focus-visible {
+  outline: 2px solid var(--kc-accent);
+  outline-offset: -2px;
+}
+
+/* The row's contents. The indent arrives as an inline style from the library, so the
+   box has to fill what is left of the row rather than be the row itself. */
+
+/* The arrow that says whether a folder is open.
+ *
+ * It is part of the row rather than a control of its own, because the whole row opens
+ * the folder: a separate target beside a target that does the same thing is a place
+ * for a person to click and see nothing happen. It is still given a size and a gap of
+ * its own so the row's text starts in the same place at every depth, which is what
+ * makes a list of them scannable. */
+.chev,
+.chevOpen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  color: var(--kc-text-dim);
+  transition: transform 0.15s var(--kc-ease);
+}
+
+.chevOpen {
+  transform: rotate(90deg);
+}
+
+/* A folder and a file are told apart by shape, because colour here is reserved for
+   state and neither of them is one. Only folders are ever listed, so there is one
+   shape rather than two to tell apart. */
+.dir {
+  flex-shrink: 0;
+  color: var(--kc-text-dim);
+}
+
+.name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The scrollbar component fills the tree's holder: the holder is measured by the
+   dialog, the wrapper takes all of it, and the bar it draws is the scrollbar of the
+   tree rather than a second one beside the first. */
+.treeFill {
+  height: 100%;
+  width: 100%;
+}

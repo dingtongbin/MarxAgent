@@ -294,4 +294,41 @@ func stateChangeReason(message Message) string {
 	return string(message.Role) + "_message_appended"
 }
 
+// interruptedMarker is what a model is told about a turn that was cut off.
+//
+// It is a marker rather than a sentence because it is not said to a person: the
+// window marks the message itself as incomplete and says so in the language the
+// conversation is in. This text goes to a model, in a history, as one of its own
+// words — and it has to be a form every provider will accept in an assistant turn,
+// which rules out the empty turn and anything that looks like a tool call.
+const interruptedMarker = "[interrupted]"
+
+// markIncomplete records that an answer was cut off, and makes the record one that
+// can still be asked about.
+//
+// A message of nothing but thinking is an honest record of what a model did before
+// it was stopped, and it is kept: throwing it away would be throwing away the record
+// of what was said. It is also a message no provider can be given again. An assistant
+// turn with no words in it is not a turn, and a provider asked to continue from one
+// answers with a request it cannot parse — and then the conversation is dead for
+// everybody after it, one interrupted turn having cost every turn that followed.
+//
+// So the cut-off is also said in the one form that is always acceptable: as text, in
+// the assistant's own turn, where the next model reads it as what it is. The blocks
+// already there are not touched, because what a model managed to think before being
+// stopped is part of the record too.
+func markIncomplete(message Message) Message {
+	message.Incomplete = true
+	for _, block := range message.Content {
+		if block.Type == ContentTypeText {
+			return message
+		}
+	}
+	message.Content = append(message.Content, ContentBlock{
+		Type: ContentTypeText,
+		Text: interruptedMarker,
+	})
+	return message
+}
+
 var _ StateView = (*stateView)(nil)

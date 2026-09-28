@@ -80,6 +80,16 @@ func (o *Orchestrator) Tools() []core.Tool {
 	}
 }
 
+// Close ends the pool the tools direct. The pool holds the slots and the
+// concurrency claims, so a caller that is done directing sub agents ends it
+// through the same set of hands that built it.
+func (o *Orchestrator) Close() error {
+	if o == nil || o.pool == nil {
+		return nil
+	}
+	return o.pool.Close()
+}
+
 // jsonResult builds a successful result from anything marshalable.
 func jsonResult(value any) (core.ToolResult, error) {
 	encoded, err := json.Marshal(value)

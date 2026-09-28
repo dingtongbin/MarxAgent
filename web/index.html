@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- The scheme is declared so the browser paints its own background before the
+         stylesheet arrives. Without it a dark interface flashes white on every load,
+         which on a desktop tool reads as a fault rather than as a theme. -->
+    <meta name="color-scheme" content="dark light" />
+    <!-- The same file as the mark, at the sizes a browser actually asks for. A tab
+         icon is 16 or 32 pixels and a home screen icon is 180, and pointing all of
+         them at one file is how a mark ends up a blurred square. -->
+    <link rel="icon" type="image/png" sizes="32x32" href="./logo.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="./logo.png" />
+    <title>MarxAgent</title>
+    <script>
+      /*
+       * The theme is decided here, before anything is painted, rather than by the
+       * application once it has loaded.
+       *
+       * A theme applied by the application is a theme applied too late. The page has
+       * already been painted in the wrong one, and a person who chose light mode sees
+       * a dark flash on every load. On a desktop tool that is not a cosmetic detail:
+       * it happens every time, and it happens at night.
+       *
+       * The decision is made once, from the same three sources the application would
+       * use, and the class it sets on the root is the same one. The application reads
+       * what was set rather than deciding again, so there is one answer rather than
+       * two that could disagree.
+       */
+      (function () {
+        try {
+          var stored = null;
+          try {
+            stored = window.localStorage.getItem("marxagent.theme");
+          } catch (storage) {
+            // Storage can be refused. The session still gets a theme; it just will not
+            // be remembered, which is a smaller failure than an unstyled page.
+          }
+          var choice = stored === "light" || stored === "dark" ? stored : null;
+          var dark =
+            choice === "dark" ||
+            (choice === null &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.setAttribute("data-theme", dark ? "dark" : "light");
+          root.style.colorScheme = dark ? "dark" : "light";
+        } catch (any) {
+          // Anything unexpected leaves the page in the stylesheet's own default. A
+          // page with the wrong theme is a smaller problem than a page that failed to
+          // render, and nothing here is worth failing the whole document over.
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

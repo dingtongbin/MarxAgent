@@ -4,7 +4,7 @@ data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,
 
 data: {"type":"response.reasoning_summary_text.delta","sequence_number":2,"output_index":0,"item_id":"rs_corpus","delta":"Hello"}
 
-data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"reasoning","id":"rs_corpus","summary":[]}}
+data: {"type":"response.output_item.done","sequence_number":3,"output_index":0,"item":{"type":"reasoning","id":"rs_corpus","summary":[],"encrypted_content":"corpus-encrypted-reasoning"}}
 
 data: {"type":"response.content_part.added","sequence_number":4,"output_index":1,"item_id":"msg_corpus","part":{"type":"output_text","text":""}}
 

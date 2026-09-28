@@ -1,0 +1,405 @@
+.sidebar {
+  /* The window's grid, not a flex column it is nested in: the menu is the full height
+     of the window and sits in the first column. */
+  grid-column: 1;
+  grid-row: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  /* The width is given inline, because the drag writes it there. The value here is the
+     fallback for the moment before React has rendered, so the column does not start
+     at its smallest and jump. */
+  width: 232px;
+  min-width: 180px;
+  /* Background rather than a card: the task menu is part of the canvas, not a panel
+     sitting on it, and an edge drawn down its right would say it was an object. */
+  background: var(--kc-panel);
+  padding: 10px 0 10px 10px;
+  position: relative;
+}
+
+/* The drag handle on the right edge: a thin line that only appears when the pointer is
+   near it, so the affordance is there without a permanent stripe down the window. */
+.resize {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.resize::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 3px;
+  width: 2px;
+  height: 100%;
+  background: transparent;
+  transition: background 0.12s var(--kc-ease);
+}
+.resize:hover::after {
+  background: var(--kc-accent-border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 2px 10px 10px;
+  font-size: var(--kc-font-lg);
+  font-weight: 650;
+  letter-spacing: 0.4px;
+  color: var(--kc-text);
+  user-select: none;
+}
+
+.brandLogo {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  border: 1px solid var(--kc-border-strong);
+  flex-shrink: 0;
+}
+
+/* --- The entries that are not a list of things --- */
+.entries {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 10px;
+}
+
+.entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: 15px;
+  text-align: left;
+}
+.entry:hover {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+}
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 10px 6px 11px;
+}
+
+.sectionTitle {
+  font-size: var(--kc-font-sm);
+  font-weight: 620;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--kc-text-dim);
+  flex: 1;
+}
+
+.headBtns {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.headBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text-dim);
+}
+.headBtn:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+/* A head button that is currently doing something is marked by its own background, so
+   the state is visible without a label explaining it. */
+.headBtnOn {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+
+.sortWrap {
+  position: relative;
+}
+/* The shield is a full-screen click catcher. A menu closed by clicking the thing that
+   opened it does not need the menu to be positioned relative to anything. */
+.sortShield {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+.sortMenu {
+  position: absolute;
+  right: 0;
+  top: 26px;
+  z-index: 81;
+  min-width: 116px;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+.sortItem {
+  padding: 5px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+}
+.sortItem:hover {
+  background: var(--kc-hover);
+}
+.sortOn {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+
+/* The tree scrolls on its own. Without this the sidebar would grow past the window and
+   the whole page would scroll, taking the tab bar off the top with it. */
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 10px;
+}
+
+.treeEmpty {
+  padding: 16px 11px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text-faint);
+  line-height: 1.6;
+}
+
+.projectRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 6px 5px 7px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+.projectRow:hover,
+.projectRow:focus-visible {
+  background: var(--kc-hover);
+  outline: none;
+}
+
+/* The new-session button on a project row appears on hover, because a permanent plus
+   on every row is a column of identical buttons competing with the project names. */
+.projectPlus {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s var(--kc-ease),
+    background 0.12s,
+    color 0.12s;
+}
+.projectRow:hover .projectPlus,
+.projectRow:focus-visible .projectPlus,
+.projectPlus:focus-visible {
+  opacity: 1;
+}
+.projectPlus:hover {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+}
+
+.chev {
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+  transition: transform 0.15s var(--kc-ease);
+}
+.chevOpen {
+  transform: rotate(90deg);
+}
+
+.projectName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 570;
+}
+
+.count {
+  font-size: var(--kc-font-sm);
+  font-family: var(--kc-font-mono);
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px 5px 10px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-md);
+  /* The line height is fixed rather than left to the font, because the row below
+     calculates how many rows fit from it. A row whose height moved with its content
+     would make that calculation wrong. */
+  line-height: 22px;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+/* Five rows and no more. A project with four hundred sessions should not push every
+   other project off the bottom of the menu. */
+.sessionScroll {
+  max-height: calc(5 * 32px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.sessionRow:hover,
+.sessionRow:focus-visible {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+  outline: none;
+}
+.rowOn {
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+}
+.rowArchived {
+  opacity: 0.6;
+}
+
+.chevRun {
+  color: var(--kc-info);
+}
+
+.rowTime {
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+}
+
+.rowTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The time and the actions button trade places on hover rather than both being shown.
+   Two permanent controls on every row is a list of buttons, and a list of buttons is
+   not a list of things. */
+.rowDots {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  margin-right: -4px;
+  padding: 0;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text-dim);
+}
+.sessionRow:hover .rowTime,
+.sessionRow:focus-within .rowTime {
+  display: none;
+}
+.sessionRow:hover .rowDots,
+.sessionRow:focus-within .rowDots {
+  display: inline-flex;
+}
+.rowDots:hover {
+  background: var(--kc-hover-strong, var(--kc-hover));
+  color: var(--kc-text);
+}
+
+/* The row menu is positioned against the window rather than the row, because the
+   sidebar is an overflow container and anything positioned inside it is cut off at its
+   edge. A menu that opens next to a row at the bottom of the list and is clipped in
+   half is worse than no menu. */
+.rowShield {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+}
+.rowMenu {
+  position: fixed;
+  z-index: 81;
+  min-width: 128px;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+.rowMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+  text-align: left;
+  white-space: nowrap;
+}
+.rowMenuItem:hover:not(:disabled) {
+  background: var(--kc-hover);
+}
+.rowMenuItem:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.rowMenuDanger {
+  color: var(--kc-danger);
+}
+.rowMenuDanger:hover:not(:disabled) {
+  background: var(--kc-danger-bg);
+  color: var(--kc-danger);
+}

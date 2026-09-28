@@ -1,0 +1,220 @@
+/* 工作区面板：编程会话右侧的整块面板，全部内容标签页化 */
+
+/* 编程会话的外壳：导航栏在上，左右分栏在下 */
+.shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 导航栏：工具按钮靠右，顺序即声明顺序，从不倒序 */
+.nav {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+
+.navTools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.navBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+}
+.navBtn:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+.navBtnOn {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+
+/* 分栏：左对话，右工作区。分栏的两边都收缩到 0，因为一条长路径谁也不能推开谁 */
+.split {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  width: 340px;
+  flex-shrink: 0;
+  border-left: 1px solid var(--kc-border);
+  min-height: 0;
+  background: var(--kc-workspace);
+}
+
+.panelBar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 4px 0 6px;
+  border-bottom: 1px solid var(--kc-border);
+  flex-shrink: 0;
+}
+
+.panelTabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+/* 面板内的页签：与标签页管理器同形，小一号 */
+.panelTab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 9px;
+  border: none;
+  border-radius: var(--kc-radius-md) var(--kc-radius-md) 0 0;
+  background: none;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-xs);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.panelTab:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+.panelTabOn {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+
+.panelClose {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text-faint);
+  flex-shrink: 0;
+}
+.panelClose:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+
+.panelBody {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 0;
+}
+
+/* 文件树：一行一个条目，缩进即层级 */
+.tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.treeRow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-xs);
+  text-align: left;
+  white-space: nowrap;
+}
+.treeRow:hover {
+  background: var(--kc-hover);
+}
+
+.treeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* git：分支一行，其余按 git 自己的书写原样列出 */
+.git {
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gitBranch {
+  padding: 5px 9px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text);
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-xs);
+}
+
+.gitHead {
+  font-size: var(--kc-font-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--kc-text-faint);
+}
+
+.gitBlock,
+.gitLog {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text-dim);
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-xs);
+  line-height: 1.7;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+/* 两个暂无数据源的页签的空态 */
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  min-height: 120px;
+  padding: 0 24px;
+  text-align: center;
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-sm);
+}

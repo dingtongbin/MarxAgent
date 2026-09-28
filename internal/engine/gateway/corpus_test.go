@@ -127,6 +127,20 @@ func TestResponsesCorpusParsesInOrder(t *testing.T) {
 		string(calls[0].Input) != `{"path":"a.txt"}` {
 		t.Fatalf("calls = %#v", calls)
 	}
+	// The reasoning item's encrypted payload is a credential: it reaches the
+	// history with the item id it belongs to, or the next request replays a
+	// broken chain.
+	var encrypted string
+	var itemID string
+	for _, chunk := range chunks {
+		if chunk.Type == core.StreamTypeReasoning {
+			encrypted = chunk.EncryptedContent
+			itemID = chunk.ItemID
+		}
+	}
+	if encrypted != "corpus-encrypted-reasoning" || itemID != "rs_corpus" {
+		t.Fatalf("reasoning item = %q %q, want the corpus blob and its item id", encrypted, itemID)
+	}
 	if chunks[len(chunks)-1].ResponseID != "resp_corpus" {
 		t.Fatalf("response id = %q", chunks[len(chunks)-1].ResponseID)
 	}

@@ -421,6 +421,16 @@ func (a *openAIResponsesAdapter) parseStream(body io.Reader, yield func(core.Str
 		order = order[:0]
 		return true
 	}
+	emitReasoningItem := func(item responsesItem) bool {
+		if item.EncryptedContent == "" {
+			return true
+		}
+		return emit(core.StreamChunk{
+			Type:             core.StreamTypeReasoning,
+			EncryptedContent: item.EncryptedContent,
+			ItemID:           item.ID,
+		})
+	}
 	for event := range DecodeStream(body) {
 		if stopped {
 			return
@@ -459,6 +469,15 @@ func (a *openAIResponsesAdapter) parseStream(body io.Reader, yield func(core.Str
 				return
 			}
 		case "response.output_item.added":
+			if payload.Item.Type == "reasoning" {
+				// An endpoint may hand the encrypted blob over whole at the
+				// item boundary. Emitting it here and again at item done is
+				// safe: the accumulator updates a repeated reasoning item
+				// rather than duplicating it.
+				if !emitReasoningItem(payload.Item) {
+					return
+				}
+			}
 			if payload.Item.Type != "function_call" {
 				break
 			}
@@ -484,6 +503,16 @@ func (a *openAIResponsesAdapter) parseStream(body io.Reader, yield func(core.Str
 			}
 			state.arguments.WriteString(payload.Delta)
 		case "response.output_item.done":
+			if payload.Item.Type == "reasoning" {
+				// The reasoning item reaches its complete form here: the id and
+				// the encrypted payload it must be replayed with. A reasoning
+				// chain that never reaches the history breaks the next request,
+				// because the format rejects an interrupted reasoning chain.
+				if !emitReasoningItem(payload.Item) {
+					return
+				}
+				break
+			}
 			state, ok := byIndex[payload.OutputIndex]
 			if !ok {
 				break

@@ -1,0 +1,40 @@
+/*
+ * The window.
+ *
+ * There is no wrapper around the tab bar and the work area. They are placed here, on
+ * the window's own grid, rather than gathered into a box that exists only to hold them.
+ *
+ * The reason that is worth saying: a wrapper that only groups things is a thing that
+ * can be given a background, a border and a radius by whoever edits this file next, and
+ * then it is a panel, and then the window has a frame with panels inside it. Expressed
+ * as placement instead, there is nothing to style — a grid cell has no appearance of its
+ * own and nothing to remove from it later.
+ */
+
+.app {
+  height: 100%;
+  display: grid;
+  /* One column for the task menu at whatever width a person dragged it to, and the rest
+     of the window for everything else. The second column is minmax(0, 1fr) rather than
+     1fr so a long line of text in a panel can shrink the column instead of pushing a
+     scrollbar onto a window that is supposed to have none. */
+  grid-template-columns: auto minmax(0, 1fr);
+  /* The tab bar is as tall as it needs to be, and the work area takes what is left. */
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--kc-bg);
+}
+
+/*
+ * The work area, in the cell below the tab bar.
+ *
+ * It is a flex row because the right-hand dock sits beside the log rather than over it.
+ * When there is no dock there is nothing in the row but the log, and the log takes the
+ * whole width because it is the only child and the row has no gaps in it.
+ */
+.body {
+  grid-column: 2;
+  grid-row: 2;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
