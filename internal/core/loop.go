@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -32,7 +33,18 @@ func (a *agent) run(ctx context.Context, input Input, events chan<- Event) {
 		runErr = postLoopErr
 	}
 	if runErr != nil {
-		_ = a.emitError(ctx, events, "agent_loop", runErr)
+		// A turn that was stopped is not a turn that failed, and it is not published
+		// as one. Somebody asked for it, and everything downstream reads an error
+		// event as something going wrong: the window puts it up as a failure, the
+		// session is marked degraded, and the audit records an error for a decision
+		// rather than for a fault.
+		//
+		// What happened is already on the record, in the only form that is true — the
+		// answer as far as it got, marked incomplete. A caller that wants to know the
+		// run was cancelled has the context to ask.
+		if !errors.Is(runErr, context.Canceled) {
+			_ = a.emitError(ctx, events, "agent_loop", runErr)
+		}
 		return
 	}
 
@@ -83,24 +95,21 @@ func (a *agent) executeLoop(ctx context.Context, input Input, events chan<- Even
 		if err != nil {
 			return fmt.Errorf("core: generate assistant message ID: %w", err)
 		}
-		stream, err := a.provider.ChatStream(ctx, request)
-		if err != nil {
-			return fmt.Errorf("core: provider %q: %w", a.provider.Name(), err)
-		}
-		if stream == nil {
-			return fmt.Errorf("core: provider %q returned a nil stream", a.provider.Name())
-		}
-
-		accumulator, streamErr := a.consumeStream(ctx, events, stream, messageID)
-		if streamErr != nil {
-			if message, exists := accumulator.message(messageID, false); exists {
-				message.Incomplete = true
-				a.state.appendMessage(message)
-				if eventErr := a.emitStateChange(ctx, events, message); eventErr != nil {
-					return errors.Join(streamErr, eventErr)
+		accumulator, callErr := a.callModel(ctx, events, request, messageID)
+		if callErr != nil {
+			// A call that failed after pieces had already been drawn keeps
+			// them on the record the way an interrupted stream does: the
+			// answer as far as it got, marked incomplete.
+			if accumulator != nil {
+				if message, exists := accumulator.message(messageID, false); exists {
+					message = markIncomplete(message)
+					a.state.appendMessage(message)
+					if eventErr := a.emitStateChange(ctx, events, message); eventErr != nil {
+						return errors.Join(callErr, eventErr)
+					}
 				}
 			}
-			return streamErr
+			return callErr
 		}
 
 		assistantMessage, hasAssistantMessage := accumulator.message(messageID, false)
@@ -231,6 +240,147 @@ func (a *agent) consumeStream(
 			}
 		}
 	}
+}
+
+// maxStreamRetries is how many times a model call that failed on something
+// that may come back is tried again before the failure is reported as one.
+// Three retries with a growing wait covers a blip and a restarting endpoint;
+// a longer chain of them is an outage the window should hear about instead
+// of waiting through.
+const maxStreamRetries = 3
+
+// callModel runs one provider call and its stream, retrying what can be
+// recovered.
+//
+// An endpoint that refuses a connection now often answers in a moment, and a
+// stream that dies half way often comes back the same way. Both are pauses
+// the turn waits through rather than failures that end it: each retry is
+// announced with a waiting event a window can draw inside the reasoning chain
+// it is already showing, and when the retries run out the failure is returned
+// the way any other failure is.
+//
+// A stream that died half way leaves the pieces the window has already drawn
+// on the floor: the waiting event names the message, so the window can clear
+// the half answer, and the retry starts the same message over from nothing.
+// The message was never appended to the state, so nothing on the record lies
+// about what was said.
+func (a *agent) callModel(
+	ctx context.Context,
+	events chan<- Event,
+	request ChatRequest,
+	messageID string,
+) (*messageAccumulator, error) {
+	for attempt := 0; ; attempt++ {
+		accumulator, callErr := a.callModelOnce(ctx, events, request, messageID)
+		if callErr == nil {
+			return accumulator, nil
+		}
+		if !recoverable(callErr) || errors.Is(callErr, context.Canceled) || ctx.Err() != nil {
+			return accumulator, callErr
+		}
+		if attempt >= maxStreamRetries {
+			return accumulator, callErr
+		}
+		if err := a.emitWaiting(ctx, events, messageID, attempt+1, maxStreamRetries, callErr); err != nil {
+			return accumulator, err
+		}
+		if err := waitOut(ctx, streamBackoff(attempt)); err != nil {
+			return accumulator, err
+		}
+	}
+}
+
+// callModelOnce is one try: the call and the stream it opens, with the error
+// wrapping the rest of the loop expects.
+func (a *agent) callModelOnce(
+	ctx context.Context,
+	events chan<- Event,
+	request ChatRequest,
+	messageID string,
+) (*messageAccumulator, error) {
+	stream, err := a.provider.ChatStream(ctx, request)
+	if err != nil {
+		return nil, fmt.Errorf("core: provider %q: %w", a.provider.Name(), err)
+	}
+	if stream == nil {
+		return nil, fmt.Errorf("core: provider %q returned a nil stream", a.provider.Name())
+	}
+	return a.consumeStream(ctx, events, stream, messageID)
+}
+
+// streamBackoff is the wait before the next retry. The first retry is quick,
+// because the commonest cause is a blip that is over already; each later one
+// doubles, because waiting longer than the last wait did is what a
+// recovering endpoint is owed.
+//
+// The variable exists so a test can wait out the same path in milliseconds;
+// production callers always see the growing wait.
+var streamBackoff = func(attempt int) time.Duration {
+	return time.Second << attempt
+}
+
+// waitOut sleeps for the duration, or stops early when the turn was stopped.
+func waitOut(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+// recoverable says whether a model-call failure is one the endpoint may come
+// back from: connection faults, timeouts, a rate limit that asks to be
+// retried, and the server-side failures a restarting endpoint produces.
+//
+// The markers are the words the standard library and the three providers put
+// in those failures' text, matched as text rather than by type: a turn that
+// retried only typed errors would wait out every failure whose package said
+// something else. Anything else — a request the endpoint understood and
+// refused — is an answer, and retrying an answer is how a turn spends its
+// budget saying the same wrong thing again.
+func recoverable(err error) bool {
+	if err == nil {
+		return false
+	}
+	var timeout interface{ Timeout() bool }
+	if errors.As(err, &timeout) && timeout.Timeout() {
+		return true
+	}
+	text := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"connection reset", "connection refused", "broken pipe", "eof", "timeout",
+		"unreachable", "temporarily unavailable", "too many requests",
+		"429", "500", "502", "503", "504",
+	} {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// emitWaiting announces one pause: what failed, which retry this is, and a
+// line a window can show while it waits. The event is a report that the turn
+// is still alive, not an error that ends it, and it carries the message id so
+// a window holding a half-drawn answer from a stream that died can clear it
+// before the retry draws it again.
+func (a *agent) emitWaiting(
+	ctx context.Context,
+	events chan<- Event,
+	messageID string,
+	attempt, maxAttempts int,
+	cause error,
+) error {
+	return a.emit(ctx, events, EventTypeWaiting, WaitingPayload{
+		MessageID:   messageID,
+		Attempt:     attempt,
+		MaxAttempts: maxAttempts,
+		Message: fmt.Sprintf("连接中断，正在重试（第 %d/%d 次）",
+			attempt, maxAttempts),
+	}, cause.Error())
 }
 
 // reconcileRefusedCalls merges a gate's answer back into the calls the model made.
@@ -365,13 +515,32 @@ func (a *agent) executeTool(ctx context.Context, invocation ToolInvocation) (res
 	if !exists {
 		return errorToolResult(invocation, fmt.Errorf("tool %q is not registered", invocation.ToolName))
 	}
+	// The timeout is the invocation's own, set by a hook that has seen the call,
+	// and it bounds this execution rather than the turn: a tool that hangs must
+	// not hang everything queued behind it. The deadline travels to the tool
+	// through the context, so one that watches the context stops early and says
+	// so, and one that ignores it is answered with the deadline error when it
+	// finally comes back.
+	execution := ctx
+	if invocation.Timeout > 0 {
+		var cancel context.CancelFunc
+		execution, cancel = context.WithTimeout(ctx, invocation.Timeout)
+		defer cancel()
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			result = errorToolResult(invocation, fmt.Errorf("tool %q panicked: %v", invocation.ToolName, recovered))
 		}
 	}()
-	toolResult, err := tool.Execute(ctx, cloneRawJSON(invocation.Input))
+	toolResult, err := tool.Execute(execution, cloneRawJSON(invocation.Input))
 	if err != nil {
+		// A deadline its own invocation set is a budget the tool overran, and it is
+		// reported as that rather than as the bare context error, which reads like a
+		// fault in the machinery. A cancellation that came from outside — the turn
+		// being stopped — is not this tool's overrun and keeps its own error.
+		if invocation.Timeout > 0 && errors.Is(err, context.DeadlineExceeded) {
+			err = fmt.Errorf("tool %q exceeded its %s budget: %w", invocation.ToolName, invocation.Timeout, err)
+		}
 		return errorToolResult(invocation, err)
 	}
 	if len(toolResult.Output) == 0 {
@@ -480,6 +649,25 @@ func (a *agent) emit(
 	event.Error = errorText
 	a.setEventIdentity(&event)
 	a.bus.Publish(ctx, event)
+	// An event that has room is delivered, and a context that has been cancelled is
+	// not a reason to throw it away.
+	//
+	// A single select over both would be the obvious way to write this and it is
+	// wrong: once the context is done both cases are ready, and Go takes them at
+	// random. Half the time a cancelled turn would drop the very event that records
+	// what was said before the cancellation — the state change that marks the answer
+	// incomplete — and the window and the journal would both keep a conversation with
+	// the question and nothing after it, which is indistinguishable from a turn that
+	// never said anything.
+	//
+	// So delivery is tried first and without waiting, and only a channel that is
+	// genuinely full falls through to waiting on the context. A full channel means
+	// nobody is reading, which is the case the context was there for.
+	select {
+	case events <- event:
+		return nil
+	default:
+	}
 	select {
 	case events <- event:
 		return nil
@@ -505,8 +693,17 @@ func (a *messageAccumulator) add(chunk StreamChunk) error {
 	if chunk.ResponseID != "" {
 		a.responseID = chunk.ResponseID
 	}
+	// The encrypted payload of a reasoning item is a credential the next request
+	// must replay, so it is recorded however the provider chose to deliver it,
+	// together with the item id it belongs to. The replace-on-merge rule makes a
+	// second delivery of the same item an update rather than a duplicate, which
+	// is what an added-then-done double report needs.
 	if chunk.EncryptedContent != "" {
-		a.appendOrMerge(ContentBlock{Type: ContentTypeReasoning, EncryptedContent: chunk.EncryptedContent})
+		a.appendOrMerge(ContentBlock{
+			Type:             ContentTypeReasoning,
+			EncryptedContent: chunk.EncryptedContent,
+			ResponseID:       chunk.ItemID,
+		})
 	}
 	switch chunk.Type {
 	case StreamTypeText:
@@ -517,6 +714,10 @@ func (a *messageAccumulator) add(chunk StreamChunk) error {
 			Thinking:    chunk.Text,
 			ThinkingSig: chunk.ThinkingSig,
 		})
+	case StreamTypeReasoning:
+		// The encrypted blob was already recorded above; this case only accepts
+		// the chunk type so a whole reasoning item is not read as a protocol
+		// error.
 	case StreamTypeToolCall:
 		if chunk.ToolCall == nil {
 			return errors.New("core: tool_call chunk has no tool call")

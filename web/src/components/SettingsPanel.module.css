@@ -1,0 +1,885 @@
+/*
+ * The settings tab: a title, a list of sections on the left, the chosen section on the
+ * right.
+ *
+ * Both columns stretch to the same height and scroll on their own, and the rule down
+ * the middle is a border on the content column rather than a separate element. A
+ * separate divider element would have to be told to match the taller of the two
+ * columns, and would be one pixel out the moment a section grew.
+ */
+
+.wrap {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.page {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 28px 0;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  gap: 26px;
+}
+
+.nav {
+  width: 168px;
+  flex-shrink: 0;
+  overflow-y: auto;
+  padding-bottom: 28px;
+}
+
+.navGroup {
+  margin-bottom: 18px;
+}
+
+.navGroupTitle {
+  padding: 0 10px 7px;
+  font-size: var(--kc-font-sm);
+  font-weight: 620;
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
+  color: var(--kc-text-faint);
+}
+
+.navItem {
+  display: block;
+  width: 100%;
+  padding: 7px 11px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-md);
+  text-align: left;
+}
+.navItem:hover {
+  background: var(--kc-hover);
+  color: var(--kc-text);
+}
+.navOn {
+  background: var(--kc-accent-bg);
+  color: var(--kc-text);
+  font-weight: 600;
+}
+/* The chosen item keeps its own background on hover. Letting it change would make the
+   pointer passing over it look like a different choice, and the row a person has just
+   clicked is the one whose state they are least likely to want reconsidered. */
+.navOn:hover {
+  background: var(--kc-accent-bg);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--kc-border);
+  padding: 2px 4px 32px 30px;
+}
+
+.contentTitle {
+  margin: 0 0 16px;
+  font-size: var(--kc-font-xl);
+  font-weight: 700;
+}
+
+/* A row of a setting: what it is on the left, what it is set to on the right. */
+.kvRow,
+.segRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: var(--kc-font-md);
+}
+
+.label {
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+}
+/* The value is monospaced because most of them are versions, addresses and counts, and
+   a proportional face makes `0.1.0-dev` and `0.10.0-dev` look the same width. */
+.value {
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+  text-align: right;
+  overflow-wrap: break-word;
+}
+
+/* The segmented control: one border around the whole group and a rule between the
+   buttons, rather than a border per button. Three boxes side by side is three
+   outlines to draw where one would do. */
+.seg {
+  display: flex;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  overflow: hidden;
+}
+.segBtn {
+  padding: 6px 16px;
+  border: none;
+  background: none;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-md);
+}
+.segBtn + .segBtn {
+  border-left: 1px solid var(--kc-border-strong);
+}
+.segBtn:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+.segOn {
+  color: var(--kc-btn-fg);
+  background: var(--kc-btn-bg);
+}
+.segOn:hover {
+  background: var(--kc-btn-hover);
+  color: var(--kc-btn-fg);
+}
+
+/*
+ * A section that is not built yet.
+ *
+ * A dashed outline rather than a solid one, because a dashed border is the shape that
+ * already means "this edge is provisional" — to somebody reading a diagram, to
+ * somebody waiting for a build. It says the same thing here without a sentence having
+ * to.
+ */
+.todo {
+  margin-top: 14px;
+  padding: 13px 15px;
+  border: 1px dashed var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-md);
+  line-height: 1.8;
+}
+
+.note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px dashed var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-md);
+  line-height: 1.7;
+}
+
+.linkBtn {
+  margin-top: 14px;
+  padding: 7px 13px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+}
+.linkBtn:hover {
+  background: var(--kc-hover);
+  border-color: var(--kc-accent-border);
+}
+
+/* --- The model section: a list of providers beside the editor for the chosen one --- */
+.provHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 4px 0 14px;
+}
+.provHeadText {
+  font-size: var(--kc-font-md);
+  color: var(--kc-text-dim);
+}
+.provHeadBtns {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.refreshBtn,
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text-dim);
+}
+.refreshBtn:hover,
+.iconBtn:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+.iconBtn {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--kc-radius-sm);
+}
+
+/* The refresh that is in the middle of its work turns, because a button that is
+   doing something and looks the same as one that is not is a button somebody
+   presses again. */
+.spin {
+  animation: kc-spin 1s linear infinite;
+}
+
+.provLayout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  min-height: 220px;
+}
+
+.provList {
+  width: 180px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.provItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+}
+.provItem:hover {
+  background: var(--kc-hover);
+}
+.provItemOn {
+  background: var(--kc-accent-bg);
+}
+.provItemName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The dot says whether a provider is switched on, and it is the only place in the
+   window where a green circle means "on" rather than "something happened". */
+.provDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--kc-border-strong);
+  flex-shrink: 0;
+}
+.provDotOn {
+  background: var(--kc-ok);
+}
+
+.provEmpty {
+  padding: 10px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text-faint);
+  line-height: 1.7;
+}
+
+.provAdd {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  border: 1px solid var(--kc-btn-bg);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-btn-bg);
+  color: var(--kc-btn-fg);
+  font-size: var(--kc-font-sm);
+  font-weight: 570;
+}
+.provAdd:hover {
+  filter: brightness(1.12);
+}
+
+.provEditor {
+  flex: 1;
+  min-width: 0;
+}
+
+/* The editor's own head: the name, whether it is on, and the one destructive thing
+   that is not worth a whole row to itself. */
+.edHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.edName {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 11px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+  font-weight: 600;
+  outline: none;
+}
+.edName:focus {
+  border-color: var(--kc-accent-border);
+}
+
+.edRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+.edLabel {
+  width: 90px;
+  flex-shrink: 0;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text-dim);
+}
+.edInput {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  font-family: var(--kc-font-mono);
+  outline: none;
+}
+.edInput:focus {
+  border-color: var(--kc-accent-border);
+}
+
+/* A choice that has to look like the field it stands in for. */
+.edSelectWrap {
+  flex: 1 1 0;
+  min-width: 0;
+}
+.edSelect {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+  outline: none;
+}
+.edSelect:hover {
+  border-color: var(--kc-border-strong);
+}
+.edSelectLabel {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.edSelectChev {
+  flex-shrink: 0;
+  color: var(--kc-text-dim);
+}
+
+/* The menu a field opens, and the shield behind it. They are shared by the format
+   choice, the more menu and the preset menu because they are the same shape three
+   times, and a menu that is drawn three ways is three chances to get it wrong. */
+.edMenuWrap {
+  position: relative;
+  flex-shrink: 0;
+}
+.edShield {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.edMenu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 61;
+  min-width: 120px;
+  padding: 4px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-elevated);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+.edMenuWide {
+  left: 0;
+  right: auto;
+  min-width: 100%;
+}
+.edMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  text-align: left;
+}
+.edMenuItem:hover {
+  background: var(--kc-hover);
+}
+/* The row a keypress would land on, which is not the same row as the one that is
+   chosen. They are drawn differently on purpose: the chosen row is the answer, the
+   highlighted one is where Enter would go, and a menu that showed only one of them
+   would make the pointer and the keyboard disagree about what was about to
+   happen. */
+.edMenuItemOn {
+  background: var(--kc-hover);
+}
+.edMenuLabel {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.edMenuCheck {
+  flex-shrink: 0;
+  color: var(--kc-text);
+}
+.edMenuDanger {
+  color: var(--kc-danger);
+}
+.edMenuDanger:hover {
+  background: var(--kc-danger-bg);
+  color: var(--kc-danger);
+}
+
+/* The key field and the eye beside it. The eye is a separate control rather than a
+   type toggle on the field because "show me what I typed" and "edit this" are
+   different intentions and one click should do one of them. */
+.keyWrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.keyEye {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text-dim);
+  cursor: pointer;
+}
+.keyEye:hover {
+  color: var(--kc-text);
+  border-color: var(--kc-border-strong);
+}
+
+.modelHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 8px;
+}
+.modelHeadTitle {
+  font-size: var(--kc-font-sm);
+  font-weight: 620;
+  color: var(--kc-text);
+}
+.miniBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-xs);
+}
+.miniBtn:hover {
+  background: var(--kc-hover);
+  border-color: var(--kc-accent-border);
+}
+
+/* The model list scrolls on its own so a provider with two hundred models does not
+   push the rest of the section off the bottom. */
+.modelScroll {
+  max-height: 240px;
+  overflow-y: auto;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  padding: 4px;
+}
+.modelRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 8px;
+  border-radius: var(--kc-radius-md);
+  font-size: var(--kc-font-sm);
+}
+.modelRow:hover {
+  background: var(--kc-hover);
+}
+/* A model that is switched off stays in the list and stays readable. Greying the
+   whole row is how it is said, because a row that disappeared is a model somebody
+   has to add again. */
+.modelRowOff .modelId,
+.modelRowOff .modelMeta {
+  opacity: 0.45;
+}
+.modelLeft {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.modelRight {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.modelId {
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.modelMeta {
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+  flex-shrink: 0;
+}
+.modelTag {
+  padding: 1px 6px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-sm);
+}
+
+/* What a probe said, in the row it was about. It is a word rather than a toast
+   because a message that leaves on its own is a message somebody has to be looking
+   at the moment it appears. */
+.testOk {
+  font-size: var(--kc-font-xs);
+  color: var(--kc-ok);
+  white-space: nowrap;
+}
+.testMsg {
+  font-size: var(--kc-font-xs);
+  color: var(--kc-warn);
+  white-space: nowrap;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The switch. A checkbox drawn as a checkbox cannot say "this provider is on" at a
+   glance from across a room, and this is a setting whose whole job is to be read
+   rather than adjusted. */
+.sw {
+  width: 30px;
+  height: 17px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: var(--kc-border-strong);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s var(--kc-ease);
+}
+.swOn {
+  background: var(--kc-accent-dim);
+}
+.swKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--kc-btn-fg);
+  transition: transform 0.15s var(--kc-ease);
+}
+.swOn .swKnob {
+  transform: translateX(13px);
+}
+
+/* The preset menu. It is wider than the other menus because the entries are names
+   of services rather than words, and a two-word name in a 120 pixel menu wraps. */
+.presetWrap {
+  position: relative;
+}
+.presetMenu {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  margin-top: 6px;
+  z-index: 61;
+  min-width: 220px;
+  max-height: 340px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-elevated);
+  box-shadow: var(--kc-shadow-2);
+}
+.presetItem {
+  display: block;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.presetItem:hover {
+  background: var(--kc-hover);
+}
+.presetEmpty {
+  padding: 10px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+}
+.presetShield {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+/* The model dialog. It is a dialog rather than four more rows in the editor because
+   a model has four facts about it and somebody editing one wants to see all of
+   them at once, which a growing editor does not give them. */
+.dlgOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  background: rgba(4, 5, 8, 0.62);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.dlg {
+  width: 400px;
+  max-width: calc(100vw - 48px);
+  padding: 18px 20px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-lg);
+  background: var(--kc-elevated);
+  box-shadow: var(--kc-shadow-2);
+  animation: fade-up 0.18s var(--kc-ease);
+}
+.dlgTitle {
+  margin-bottom: 14px;
+  font-size: var(--kc-font-lg);
+  font-weight: 650;
+}
+.fldLabel {
+  display: block;
+  margin: 10px 0 5px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+}
+.fldInput {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  font-family: var(--kc-font-mono);
+  outline: none;
+}
+.fldInput:focus {
+  border-color: var(--kc-accent-border);
+}
+/* The label of a number field says what the number is, because 131072 on its own
+   is not obviously a context window. */
+.fldHint {
+  margin-top: 4px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+  line-height: 1.6;
+}
+.dlgThinking {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.dlgThinkBtn {
+  padding: 5px 14px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+}
+.dlgThinkOn {
+  background: var(--kc-btn-bg);
+  border-color: var(--kc-btn-bg);
+  color: var(--kc-btn-fg);
+}
+.dlgThinkNote {
+  flex-basis: 100%;
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-xs);
+  line-height: 1.6;
+}
+.dlgAdvanced {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+}
+.dlgBtns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+.dlgBtn {
+  padding: 6px 16px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+}
+.dlgBtn:hover {
+  background: var(--kc-hover);
+}
+.dlgBtnPrimary {
+  background: var(--kc-btn-bg);
+  border-color: var(--kc-btn-bg);
+  color: var(--kc-btn-fg);
+}
+.dlgBtnPrimary:hover {
+  filter: brightness(1.12);
+}
+.dlgBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.primaryBtn {
+  margin-top: 10px;
+  align-self: flex-start;
+  padding: 7px 14px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+  cursor: pointer;
+}
+.primaryBtn:hover {
+  border-color: var(--kc-accent-border);
+}
+.primaryBtn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.dimText {
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-xs);
+  flex-shrink: 0;
+}
+
+/* A failure, in the place where the thing that failed is. */
+.errText {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px solid var(--kc-danger);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-danger-bg);
+  color: var(--kc-danger);
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+
+.provAdd:disabled,
+.refreshBtn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.refreshBtn:disabled:hover {
+  color: var(--kc-text-dim);
+  background: none;
+}
+
+@keyframes kc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.page {
+  animation: fade-up 0.18s var(--kc-ease);
+}

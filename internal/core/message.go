@@ -54,6 +54,9 @@ const (
 	StreamTypeToolCall = "tool_call"
 	// StreamTypeThinking identifies an incremental thinking chunk.
 	StreamTypeThinking = "thinking"
+	// StreamTypeReasoning carries a provider-preserved reasoning item whose
+	// encrypted payload arrived whole, as a Responses reasoning item does.
+	StreamTypeReasoning = "reasoning"
 	// StreamTypeDone identifies normal provider completion.
 	StreamTypeDone = "done"
 	// StreamTypeError identifies a terminal provider stream error.
@@ -115,5 +118,11 @@ type StreamChunk struct {
 	ThinkingSig      string        `json:"thinking_sig,omitempty"`
 	EncryptedContent string        `json:"encrypted_content,omitempty"`
 	ResponseID       string        `json:"response_id,omitempty"`
-	Err              error         `json:"-"`
+	// ItemID is the provider identifier of the item a chunk belongs to, such as
+	// a Responses reasoning item. It is separate from ResponseID because the
+	// message-level response id is what resumes a server-side chain, while an
+	// item id names one item inside it; merging the two would let a reasoning
+	// item be recorded as the turn to resume from.
+	ItemID string `json:"item_id,omitempty"`
+	Err    error  `json:"-"`
 }

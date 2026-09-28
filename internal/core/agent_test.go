@@ -581,6 +581,64 @@ func TestAgentCancellationConcurrencyAndRunValidation(t *testing.T) {
 	}
 }
 
+func TestAnInterruptedTurnLeavesAConversationThatCanBeContinued(t *testing.T) {
+	// A model that thinks and is stopped before it says anything: the shape of an
+	// interrupted turn that costs a conversation its future if it is not handled.
+	provider := providerFunc(func(context.Context, ChatRequest) (<-chan StreamChunk, error) {
+		stream := make(chan StreamChunk, 4)
+		stream <- StreamChunk{Type: StreamTypeThinking, Text: "the model began"}
+		// The stream is never closed and never finishes: the turn is ended from
+		// outside, which is what being interrupted is.
+		return stream, nil
+	})
+	agent := newTestAgent(t, provider, Config{Model: "model"})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	eventsChannel, err := agent.Run(ctx, textInput("write something"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The turn is cut off the moment the model has said something, rather than at a
+	// moment chosen before the loop had got going: a test that cancels first proves
+	// nothing about an answer that was being written.
+	for event := range eventsChannel {
+		if event.Type == EventTypePartial {
+			cancel()
+		}
+	}
+
+	messages := agent.State().Messages()
+	if len(messages) != 2 {
+		t.Fatalf("messages = %d, want the question and the interrupted answer", len(messages))
+	}
+	answer := messages[1]
+	if !answer.Incomplete {
+		t.Fatalf("the answer is not marked incomplete: %#v", answer)
+	}
+	// The record keeps what the model managed to think, because that is what it did.
+	var thinking, text string
+	for _, block := range answer.Content {
+		switch block.Type {
+		case ContentTypeThinking:
+			thinking += block.Thinking
+		case ContentTypeText:
+			text += block.Text
+		}
+	}
+	if thinking != "the model began" {
+		t.Fatalf("the thinking was lost: %#v", answer.Content)
+	}
+	// And it is a turn that can be sent again, which is the whole point: an assistant
+	// message with no words in it is rejected by every provider, and one interrupted
+	// turn would then cost the conversation every turn after it.
+	if text == "" {
+		t.Fatalf("the interrupted answer has no text to continue from: %#v", answer.Content)
+	}
+	if text != interruptedMarker {
+		t.Fatalf("the marker is %q, want %q", text, interruptedMarker)
+	}
+}
+
 func TestAgentMaxIterationsAndPostLoopError(t *testing.T) {
 	tool := testTool{
 		name:        "tool",
@@ -1157,7 +1215,8 @@ func TestAgentOutputBackpressureReturnsCancellationAtEachBoundary(t *testing.T) 
 				config.Tools = []Tool{tool}
 			}
 			agent := newTestAgent(t, &recordingProvider{streams: [][]StreamChunk{test.chunks}}, config).(*agent)
-			ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 			events := make(chan Event)
 			result := make(chan error, 1)
 			go func() { result <- agent.executeLoop(ctx, textInput("input"), events) }()
@@ -1293,6 +1352,77 @@ func TestUUIDVersionAndVariant(t *testing.T) {
 	}
 	if parts[2][0] != '4' || !strings.Contains("89ab", string(parts[3][0])) {
 		t.Fatalf("UUID is not version 4 variant 1: %q", value)
+	}
+}
+
+// A reasoning item reaches the accumulator as one chunk that carries the
+// encrypted blob and the item id it belongs to. The blob has to be replayed
+// verbatim on the next request, and the item id has to travel with the block
+// rather than with the message: a server-side response id is what resumes a
+// chain, and an item id recorded as one would point the resume at a part of the
+// answer the chain has already stored.
+func TestMessageAccumulatorKeepsReasoningItemAndResponseIDApart(t *testing.T) {
+	accumulator := &messageAccumulator{}
+	chunks := []StreamChunk{
+		{Type: StreamTypeReasoning, EncryptedContent: "blob-first", ItemID: "rs_1"},
+		{Type: StreamTypeThinking, Text: "ponder"},
+		{Type: StreamTypeReasoning, EncryptedContent: "blob-second", ItemID: "rs_2"},
+		{Type: StreamTypeText, Text: "answer"},
+		{Type: StreamTypeDone, ResponseID: "resp_9"},
+	}
+	for _, chunk := range chunks {
+		if err := accumulator.add(chunk); err != nil {
+			t.Fatalf("add(%s) error = %v", chunk.Type, err)
+		}
+	}
+	message, exists := accumulator.message("assistant-1", false)
+	if !exists {
+		t.Fatal("accumulator produced no message")
+	}
+	if message.Metadata["response_id"] != "resp_9" {
+		t.Fatalf("message response id = %#v, want resp_9", message.Metadata)
+	}
+	reasoning := make([]ContentBlock, 0, 2)
+	for _, block := range message.Content {
+		if block.Type == ContentTypeReasoning {
+			reasoning = append(reasoning, block)
+		}
+	}
+	if len(reasoning) != 2 {
+		t.Fatalf("reasoning blocks = %#v", message.Content)
+	}
+	if reasoning[0].EncryptedContent != "blob-first" || reasoning[0].ResponseID != "rs_1" {
+		t.Fatalf("first reasoning item = %#v", reasoning[0])
+	}
+	if reasoning[1].EncryptedContent != "blob-second" || reasoning[1].ResponseID != "rs_2" {
+		t.Fatalf("second reasoning item = %#v, the adjacent item must not overwrite it", reasoning[1])
+	}
+}
+
+// A repeated delivery of the same reasoning item — what an added-then-done
+// double report looks like — updates the blob in place instead of leaving a
+// duplicate block in the transcript.
+func TestMessageAccumulatorReasoningRepeatUpdatesInsteadOfDuplicating(t *testing.T) {
+	accumulator := &messageAccumulator{}
+	for _, chunk := range []StreamChunk{
+		{Type: StreamTypeReasoning, EncryptedContent: "partial", ItemID: "rs_1"},
+		{Type: StreamTypeReasoning, EncryptedContent: "complete", ItemID: "rs_1"},
+	} {
+		if err := accumulator.add(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := 0
+	for _, block := range accumulator.content {
+		if block.Type == ContentTypeReasoning {
+			count++
+			if block.EncryptedContent != "complete" {
+				t.Fatalf("repeated reasoning item kept stale content %q", block.EncryptedContent)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("reasoning blocks = %d, want the single updated item", count)
 	}
 }
 

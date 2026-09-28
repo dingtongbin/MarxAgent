@@ -277,6 +277,16 @@ type SessionSummary struct {
 	MessageCount int       `json:"message_count"`
 	LastSeq      int64     `json:"last_seq"`
 	Summary      string    `json:"summary,omitempty"`
+	// Project is the directory the session is about, which is what puts a work
+	// session's data beside the code it describes and what lets a project be
+	// found again after a restart.
+	Project string `json:"project,omitempty"`
+	// Execution is the reach a coding session's next turn runs at: build, plan
+	// or full access. Empty is build, which is what older summaries mean.
+	Execution string `json:"execution,omitempty"`
+	// Model is the provider:model the session last ran on, so reopening it does
+	// not silently move it to a different model because the default changed.
+	Model string `json:"model,omitempty"`
 }
 
 // SummaryFileName is the metadata file inside a session directory.

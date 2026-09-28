@@ -1,0 +1,217 @@
+@import "tailwindcss";
+@import "./styles/tokens.css";
+
+/*
+ * The browser is told to use the variant declared here, which is an attribute on the
+ * root rather than the operating system's preference. That is deliberate: the person
+ * using this can override it, the choice is remembered, and a desktop tool that
+ * follows the system but cannot be told otherwise is a tool that shows the wrong
+ * theme on purpose.
+ */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/*
+ * The theme names, mapped onto the utility names the components use.
+ *
+ * Mapping them here rather than writing utilities by hand means the utilities exist
+ * for every token, and adding a token makes a whole family appear. The names are short
+ * because they appear in every class attribute in the interface, and `border-brd` is
+ * two characters shorter than `border-border` in every one of them.
+ */
+@theme inline {
+  --color-bg: var(--kc-bg);
+  --color-surface: var(--kc-surface);
+  --color-surface-2: var(--kc-surface-2);
+  --color-workspace: var(--kc-workspace);
+  --color-elevated: var(--kc-elevated);
+  --color-hover: var(--kc-hover);
+
+  --color-brd: var(--kc-border);
+  --color-brd-strong: var(--kc-border-strong);
+
+  --color-txt: var(--kc-text);
+  --color-txt-dim: var(--kc-text-dim);
+  --color-txt-faint: var(--kc-text-faint);
+
+  --color-accent: var(--kc-accent);
+  --color-accent-dim: var(--kc-accent-dim);
+  --color-accent-fg: var(--kc-btn-fg);
+
+  --color-ok: var(--kc-ok);
+  --color-danger: var(--kc-danger);
+  --color-warn: var(--kc-warn);
+  --color-info: var(--kc-info);
+
+  --color-bubble: var(--kc-bubble);
+  --color-code-bg: var(--kc-code-bg);
+
+  --color-diff-add: var(--kc-diff-add);
+  --color-diff-del: var(--kc-diff-del);
+
+  --color-tok-keyword: var(--kc-tok-keyword);
+  --color-tok-string: var(--kc-tok-string);
+  --color-tok-number: var(--kc-tok-number);
+  --color-tok-comment: var(--kc-tok-comment);
+  --color-tok-function: var(--kc-tok-function);
+  --color-tok-type: var(--kc-tok-type);
+  --color-tok-punct: var(--kc-tok-punct);
+  --color-tok-attr: var(--kc-tok-attr);
+
+  --shadow-card: var(--kc-shadow-1);
+  --shadow-raised: var(--kc-shadow-2);
+
+  --radius-card: var(--kc-radius-lg);
+  --radius-ws: var(--kc-radius-ws);
+
+  --font-sans: var(--kc-font-sans);
+  --font-mono: var(--kc-font-mono);
+
+}
+
+@layer base {
+  /*
+   * A fixed viewport, and the page itself does not scroll.
+   *
+   * Every panel scrolls inside itself. A page that scrolls as a whole drags the top
+   * bar and the sidebar off the top, so the controls that were supposed to stay put
+   * do not, and a person halfway down a long conversation cannot reach the send
+   * button without scrolling back up first.
+   */
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+  }
+
+  /*
+   * Every box measures its border and padding inside its declared size.
+   *
+   * Without this, a panel declared as 100% wide with a border and padding is wider
+   * than 100%, which pushes a horizontal scrollbar onto a window that was meant to
+   * have none. It is the default in almost every other environment and not here, and
+   * the bug it causes is a layout that only misbehaves on one platform.
+   */
+  html {
+    box-sizing: border-box;
+  }
+  *,
+  *::before,
+  *::after {
+    box-sizing: inherit;
+  }
+
+  * {
+    border-color: var(--kc-border);
+  }
+
+  body {
+    background-color: var(--kc-bg);
+    color: var(--kc-text);
+    font-family: var(--kc-font-sans);
+    font-size: var(--kc-font-md);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /*
+   * The focus ring is drawn rather than removed. Removing it makes the interface
+   * usable with a mouse and unusable with a keyboard, and a keyboard is how somebody
+   * who cannot point at things uses it.
+   */
+  :focus-visible {
+    outline: 2px solid var(--kc-accent);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background-color: var(--kc-accent-bg);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background-color: var(--kc-border-strong);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background-color: var(--kc-text-faint);
+    background-clip: content-box;
+  }
+}
+
+@layer utilities {
+  /*
+   * Anything that moves on its own stops moving when the person has asked for that.
+   * The request is about discomfort, and an animation that ignores it is an animation
+   * that makes somebody ill.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  /*
+   * An icon inside a control is the size of the control's label.
+   *
+   * An icon set has a default size, and that default is 24 pixels — which is a sensible
+   * size for a standalone glyph and far too large for one sitting in a 32 pixel button
+   * next to some text. Every one that was left unsized filled its button, and there is
+   * no way to tell from reading the markup that a size is missing, because the tag looks
+   * complete either way.
+   *
+   * So the size is decided here, once, by where the icon is rather than by each place
+   * that draws one. A rule that says "an icon in a button is 16 pixels" is one line; a
+   * convention that says "remember to pass size" is one line in a document that
+   * everybody has to remember to read.
+   *
+   * A larger icon is still possible, by asking for it on the icon itself: the rule here
+   * sets the default and an explicit class on the element wins over it.
+   */
+  button svg,
+  [role='button'] svg {
+    width: 1rem;
+    height: 1rem;
+  }
+
+  /* Numbers that line up in a column are set in tabular figures. Proportional figures
+     make a column of counts look ragged, and the raggedness reads as the numbers
+     being wrong. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* A scroll region that is a region rather than a page: it scrolls its own content
+     and does not pass the scroll on to the window, which is what keeps a sidebar from
+     scrolling the whole interface when it runs out of items. */
+  .scroll-region {
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+  }
+}
+
+/* While a divider is being dragged, the whole window behaves as though it is one
+   surface being resized. The cursor is the column resize cursor everywhere, including
+   over text that would otherwise show a text caret and read as though the drag had
+   already ended, and the text cannot be selected, because a drag that ends with half a
+   word highlighted is a drag that looks broken. */
+body.kc-resizing {
+  cursor: col-resize;
+  user-select: none;
+}

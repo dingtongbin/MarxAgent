@@ -1,0 +1,230 @@
+.bar {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--kc-border);
+  flex-shrink: 0;
+}
+
+/* The tabs scroll sideways rather than being squeezed. A tab that narrows to fit is a
+   tab whose name has been cut off, and the point of a tab strip is the names. */
+.tabs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--kc-border-strong) transparent;
+}
+.tabs::-webkit-scrollbar {
+  height: 5px;
+}
+.tabs::-webkit-scrollbar-thumb {
+  background: var(--kc-border-strong);
+  border-radius: 3px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.ctrl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--kc-radius-md);
+  border: none;
+  background: none;
+  color: var(--kc-text);
+  flex-shrink: 0;
+}
+.ctrl:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+.ctrlOn {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 4px 4px 9px;
+  border: 1px solid transparent;
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  /* The active tab is drawn inside its own box rather than filled edge to edge, so the
+     strip reads as a row of tabs and not as one continuous bar with a highlight. */
+  min-width: 84px;
+  max-width: 230px;
+  flex-shrink: 0;
+}
+.tab:hover {
+  color: var(--kc-text);
+  background: var(--kc-accent-bg);
+}
+.tabOn {
+  color: var(--kc-text);
+  background: var(--kc-surface-2);
+  border-color: var(--kc-border);
+}
+
+.tabIcon {
+  color: var(--kc-text-dim);
+  flex-shrink: 0;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.dotIdle {
+  background: var(--kc-text-faint);
+  opacity: 0.55;
+}
+.dotRun {
+  background: var(--kc-info);
+  /* The keyframes are declared here rather than in the global sheet, alongside the
+     rule that uses them. A name referenced across files has to survive being rewritten
+     by the module transform, and the only name that is certain to survive is one that
+     was never out of the file's reach. */
+  animation: kc-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes kc-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--kc-font-md);
+  line-height: 1;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--kc-text);
+  flex-shrink: 0;
+}
+.close:hover {
+  background: var(--kc-hover);
+}
+
+.menuOverlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.menu {
+  position: fixed;
+  min-width: 168px;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.menuItem {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+}
+.menuItem:hover {
+  background: var(--kc-hover);
+}
+.menuDanger {
+  color: var(--kc-danger);
+}
+.menuDanger:hover {
+  background: var(--kc-danger-bg);
+}
+
+.langWrap {
+  position: relative;
+  display: flex;
+}
+.langShield {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+}
+.langMenu {
+  position: fixed;
+  z-index: 101;
+  width: 140px;
+  padding: 5px;
+  background: var(--kc-surface);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.35);
+  animation: langIn 0.1s var(--kc-ease);
+}
+@keyframes langIn {
+  from {
+    opacity: 0;
+    transform: translateY(-2px) scale(0.98);
+  }
+}
+.langItem {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.langItem:hover {
+  background: var(--kc-hover);
+}
+.langOn {
+  background: var(--kc-accent-bg);
+}

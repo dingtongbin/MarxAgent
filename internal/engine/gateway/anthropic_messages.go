@@ -244,6 +244,14 @@ func anthropicAssistantBlocks(blocks []core.ContentBlock) ([]anthropicBlock, err
 				Name:  block.ToolName,
 				Input: input,
 			})
+		case core.ContentTypeReasoning:
+			// The encrypted reasoning blob belongs to a Responses chain and has
+			// no representation in this format. Dropping it is the same
+			// concession the Completions adapter makes: the history itself is
+			// the shared superset, so a conversation that moved between formats
+			// must stay speakable rather than fail on a credential it cannot
+			// carry.
+			continue
 		default:
 			return nil, fmt.Errorf("%w: block type %q cannot be sent in an assistant message", ErrInvalidRequest, block.Type)
 		}

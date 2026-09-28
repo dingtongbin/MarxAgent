@@ -1,0 +1,67 @@
+# Air rebuilds and restarts the backend when the Go code changes.
+#
+# The frontend is not watched, and that is the point. Vite already reloads the
+# interface in the browser, and watching web/ here would make every interface change
+# restart the backend as well, so a two second edit would cost a process restart and
+# a dropped event stream for nothing.
+#
+# The built interface is not watched either. It changes every time the frontend is
+# built, and it is served from disk in development, so a change to it is not a change
+# to the program.
+#
+#   terminal 1:  air
+#   terminal 2:  cd web && npm run dev
+#   browser:     http://127.0.0.1:5173/#token=...   (the token is in the air output)
+
+root = "."
+tmp_dir = "tmp/air"
+
+[build]
+  # Building to a temporary name and moving it into place afterwards avoids the
+  # classic Windows failure, where an executing file is locked and the build cannot
+  # write over it.
+  # The binary and the arguments it is started with, in one value. It is a list
+  # rather than a string: a bare path makes air run the program with nothing, and the
+  # program then finds nothing to do and exits, which looks like a reload that did not
+  # work rather than a program that was never asked to serve.
+  # The port is fixed rather than left to the host, because the Vite dev server
+  # forwards the event stream to a known address. A port of zero would work and then
+  # every request from the interface would land on nothing.
+  entrypoint = ["./tmp/air/marxagent.exe", "-serve", "-addr", "127.0.0.1:8787", "-debug"]
+  cmd = "go build -o ./tmp/air/marxagent.exe ./cmd/marxagent"
+  include_ext = ["go", "mod", "sum", "yaml", "json", "tmpl", "md"]
+  # Only what is compiled. The whole tree would include the built interface and every
+  # dependency's sources, so a change in a dependency cache would restart the program.
+  exclude_dir = [
+    "tmp",
+    "web",
+    "internal/assembly/ui/web/static",
+    "tests",
+  ]
+  exclude_regex = ["_test\\.go$", "testdata"]
+  exclude_unchanged = true
+  # A moment for the filesystem to settle, because an editor that writes a file in
+  # several steps otherwise rebuilds twice for one save.
+  delay = 200
+  # The previous process is stopped before the new one starts. Without this the port
+  # is still held and the new process fails to bind, and the failure looks like a bug
+  # in the change that caused it.
+  stop_on_error = true
+  send_interrupt = true
+  kill_delay = "500ms"
+
+[log]
+  time = true
+  main_only = true
+  # Nothing is silenced. The project's log fields are frozen and everything the
+  # application says goes through log/slog; air's own colouring is about the build,
+  # not about what the program reports.
+  time_format = "15:04:05"
+
+[misc]
+  # A clean removes the build output, not the tree.
+  clean_on_exit = false
+
+[screen]
+  clear_on_rebuild = false
+  keep_scroll = true

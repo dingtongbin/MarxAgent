@@ -614,6 +614,65 @@ func TestResponsesStreamSurfacesReasoning(t *testing.T) {
 	}
 }
 
+// A reasoning item carries the encrypted payload the next request must replay
+// and the item id it belongs to. The stream has to hand both over, because a
+// chain that never reaches the history breaks the next turn: the format rejects
+// an interrupted reasoning chain. The item id travels separately from the
+// message-level response id, which is what resumes the server-side chain.
+func TestResponsesStreamReplaysReasoningItem(t *testing.T) {
+	adapter := responsesAdapterFor(t)
+	body := responsesStream(t,
+		responsesEventCase{data: `{"type":"response.created","response":{"id":"resp_7"}}`},
+		responsesEventCase{data: `{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}}`},
+		responsesEventCase{data: `{"type":"response.reasoning_summary_text.delta","delta":"pondering"}`},
+		responsesEventCase{data: `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"opaque-blob"}}`},
+		responsesEventCase{data: `{"type":"response.completed","response":{"id":"resp_7"}}`},
+	)
+	chunks := drainResponses(t, adapter, body)
+	reasoning := make([]core.StreamChunk, 0, 1)
+	for _, chunk := range chunks {
+		if chunk.Type == core.StreamTypeReasoning {
+			reasoning = append(reasoning, chunk)
+		}
+	}
+	if len(reasoning) != 1 {
+		t.Fatalf("reasoning chunks = %#v", chunks)
+	}
+	if reasoning[0].EncryptedContent != "opaque-blob" || reasoning[0].ItemID != "rs_1" {
+		t.Fatalf("reasoning item = %#v", reasoning[0])
+	}
+	if chunks[len(chunks)-1].ResponseID != "resp_7" {
+		t.Fatalf("chain id must stay apart from the item id: %#v", chunks[len(chunks)-1])
+	}
+}
+
+// A reasoning item delivered whole at the item boundary is not lost when no
+// separate done event repeats it.
+func TestResponsesStreamReplaysReasoningItemAtAdded(t *testing.T) {
+	adapter := responsesAdapterFor(t)
+	body := responsesStream(t,
+		responsesEventCase{data: `{"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"whole-blob"}}`},
+		responsesEventCase{data: `{"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"whole-blob"}}`},
+		responsesEventCase{data: `{"type":"response.completed","response":{"id":"resp_1"}}`},
+	)
+	chunks := drainResponses(t, adapter, body)
+	reasoningCount := 0
+	for _, chunk := range chunks {
+		if chunk.Type != core.StreamTypeReasoning {
+			continue
+		}
+		reasoningCount++
+		if chunk.EncryptedContent != "whole-blob" || chunk.ItemID != "rs_2" {
+			t.Fatalf("reasoning item = %#v", chunk)
+		}
+	}
+	// The accumulator collapses a repeated delivery; the stream itself hands it
+	// over at both boundaries it was reported on.
+	if reasoningCount != 2 {
+		t.Fatalf("reasoning deliveries = %d, want one per item event", reasoningCount)
+	}
+}
+
 func TestResponsesStreamIgnoresPartEvents(t *testing.T) {
 	adapter := responsesAdapterFor(t)
 	body := responsesStream(t,

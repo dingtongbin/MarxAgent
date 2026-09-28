@@ -9,3 +9,11 @@
 *.test
 *.out
 /AGENTS.md
+/tmp/
+/web/node_modules/
+# The built interface, produced by `npm run build` in web/. It is embedded into the
+# binary, so a release build runs the frontend build first; the placeholder
+# keeps the embed pattern satisfied in a tree that has not been built yet.
+/internal/assembly/ui/web/static/*
+!/internal/assembly/ui/web/static/.gitkeep
+*.tsbuildinfo

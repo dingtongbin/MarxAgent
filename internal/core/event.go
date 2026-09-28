@@ -29,6 +29,11 @@ const (
 	EventTypeCompact EventType = "compact"
 	// EventTypePartial carries an incremental provider chunk.
 	EventTypePartial EventType = "partial"
+	// EventTypeWaiting carries a pause the turn is waiting through: a model
+	// call that failed on something that may come back, and the retry that
+	// will follow. It is a report that the turn is still alive rather than an
+	// error that ends it.
+	EventTypeWaiting EventType = "waiting"
 	// EventTypeAll subscribes an observer to every event type.
 	EventTypeAll EventType = ""
 )
@@ -89,6 +94,16 @@ type StateChangePayload struct {
 type ErrorPayload struct {
 	Operation string `json:"operation"`
 	Message   string `json:"message"`
+}
+
+// WaitingPayload carries one pause a turn is waiting through: what failed,
+// which retry this is, and a line a window can show inside the reasoning
+// chain it is already drawing.
+type WaitingPayload struct {
+	MessageID   string `json:"message_id,omitempty"`
+	Attempt     int    `json:"attempt"`
+	MaxAttempts int    `json:"max_attempts"`
+	Message     string `json:"message"`
 }
 
 // DonePayload carries the final read-only state snapshot.

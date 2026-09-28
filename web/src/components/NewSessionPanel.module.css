@@ -1,0 +1,1235 @@
+/* 任务发射台（新建任务页签）：问候语 + 组合输入卡，整块在页签内水平垂直居中 */
+.wrap {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.launcher {
+  width: 720px;
+  max-width: calc(100% - 48px);
+  padding: 0 0 32px;
+  margin: auto;
+  animation: kc-fade-up 0.2s var(--kc-ease);
+}
+
+/* 问候语（大字）+ 三国台词 */
+.greeting {
+  margin: 0 0 6px;
+  font-size: var(--kc-font-2xl);
+  font-weight: 640;
+  letter-spacing: 0.5px;
+  color: var(--kc-text);
+  text-align: center;
+}
+
+.quote {
+  margin: 0 0 28px;
+  text-align: center;
+  font-size: var(--kc-font-md);
+  color: var(--kc-text-dim);
+}
+
+/* 组合输入卡 */
+.card {
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-lg);
+  background: var(--kc-elevated);
+  box-shadow: var(--kc-shadow-2);
+  padding: 8px 10px 8px 12px;
+  transition: border-color 0.15s var(--kc-ease);
+}
+.card:focus-within {
+  border-color: var(--kc-text-faint);
+}
+
+.topRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 8px;
+}
+
+.anchor {
+  position: relative;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 200px;
+  padding: 3px 7px;
+  /* 透明边框只占位：容器内的按钮不带看得见的边框，边只属于包住它们的大容器 */
+  border: 1px solid transparent;
+  border-radius: var(--kc-radius-md);
+  background: transparent;
+  color: var(--kc-text);
+  font-size: var(--kc-font-xs);
+  white-space: nowrap;
+}
+.chip:hover {
+  color: var(--kc-text);
+}
+.chipOn {
+  color: var(--kc-text);
+}
+.chipMuted {
+  color: var(--kc-text-faint);
+}
+.chipOff {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 模式胶囊：位于输入容器上方，选中的胶囊带 accent 底与全强度文字 */
+.modeCapsule {
+  display: flex;
+  justify-content: center;
+  margin: 0 0 14px;
+}
+
+.modeCapsuleItem {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--kc-text-faint);
+  font-size: var(--kc-font-sm);
+  white-space: nowrap;
+  transition: color 0.15s var(--kc-ease), background 0.15s var(--kc-ease),
+    border-color 0.15s var(--kc-ease);
+}
+.modeCapsuleItem:hover {
+  color: var(--kc-text);
+}
+.modeCapsuleOn {
+  background: var(--kc-accent-bg);
+  border-color: var(--kc-border-strong);
+  color: var(--kc-text);
+  font-weight: 600;
+}
+.chipText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chipChev {
+  flex-shrink: 0;
+}
+
+.iconBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--kc-radius-md);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--kc-text);
+}
+.iconBtn:hover {
+  color: var(--kc-text);
+}
+
+/* 多行输入：默认两行紧凑起步，内容超出即长高并出现滚动条 */
+.input {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 64px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 8px 0;
+  border: none;
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-md);
+  font-family: var(--kc-font-sans);
+  line-height: 1.6;
+  outline: none;
+  resize: none;
+}
+.input::placeholder {
+  color: var(--kc-text-faint);
+}
+input.input {
+  min-height: 0;
+  max-height: none;
+  padding: 6px 9px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  overflow-y: hidden;
+}
+
+.btnRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-top: 6px;
+}
+.left,
+.right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.left {
+  justify-content: flex-start;
+}
+.right {
+  justify-content: flex-end;
+}
+
+/* --- The model picker, beside the send control --- */
+
+/*
+ * Everything in this menu is written at full strength on purpose.
+ *
+ * A model name drawn in a fading grey is a name nobody reads carefully, and this
+ * is the one control that decides where a conversation is actually going. The
+ * provider beside it is a fact about the name rather than a footnote, so it is one
+ * step down and no further: the dimmest ink in this menu is still ink a person can
+ * read at a glance.
+ */
+.modelChip {
+  max-width: 190px;
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+}
+.modelChip:hover {
+  background: var(--kc-hover);
+}
+
+.modelMenu {
+  min-width: 200px;
+  max-width: 260px;
+}
+
+/* One supplier's row, holding the button and the models that open beside it.
+   The row is the positioning context for the second level, so the models appear
+   next to the supplier they belong to rather than somewhere down the list. */
+.cascadeRow {
+  position: relative;
+}
+
+.cascadeItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.cascadeItem:hover,
+.cascadeItemOpen {
+  background: var(--kc-hover);
+}
+
+.cascadeName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cascadeChev {
+  flex-shrink: 0;
+  color: var(--kc-text-dim);
+}
+
+.modelItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.modelItem:hover {
+  background: var(--kc-hover);
+}
+.modelItemOn {
+  background: var(--kc-accent-bg);
+  color: var(--kc-text);
+  font-weight: 600;
+}
+
+.modelName {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--kc-font-mono);
+}
+
+.modelCheck {
+  flex-shrink: 0;
+  color: var(--kc-text);
+}
+
+.modelEmpty {
+  padding: 10px;
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+  color: var(--kc-text);
+}
+
+.modelDivider {
+  height: 1px;
+  margin: 4px 2px;
+  background: var(--kc-border);
+}
+
+.modelSettings {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+.modelSettings:hover {
+  background: var(--kc-hover);
+}
+
+/* --- A conversation: the log, the composer's edge, and the two notices --- */
+
+/*
+ * The log is a reading column.
+ *
+ * It is centred and capped because a line of text that runs the whole width of a
+ * window is a line nobody can find the end of, and the composer below it is 760
+ * pixels wide so the two have to agree about where the page ends.
+ */
+.conversation {
+  min-height: 0;
+}
+
+.conversationBody {
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+  padding: 24px 0 8px;
+  gap: 20px;
+}
+
+/* --- The thinking: a chain, its steps, and the ten lines of each --- */
+
+/*
+ * The chain.
+ *
+ * It is drawn as a quiet row rather than as a panel. The thinking is the reasoning
+ * behind an answer rather than part of it, so it is given a boundary of its own and
+ * nothing else — no surface behind it, because a filled box above the answer reads
+ * as the answer's own heading and the eye stops there.
+ */
+.chain {
+  margin: 0 0 10px;
+  border-left: 2px solid var(--kc-border-strong);
+  padding-left: 10px;
+}
+
+/* Both rows are titled on the left, with the chevron in one column at the right.
+ *
+ * Said rather than assumed: a fold row is a list, and a list whose titles do not all
+ * start at the same edge cannot be scanned down its length — the eye has to find each
+ * one's beginning again. So the alignment is set here rather than left to whatever the
+ * row inherits, because the two rows are built from a component that brings its own
+ * flex settings and those are not the ones wanted here. */
+.chainTrigger {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 7px;
+  padding: 2px 0;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-sm);
+  transition: color 0.15s var(--kc-ease);
+}
+
+.chainTrigger:hover {
+  color: var(--kc-text);
+}
+
+.chainIcon {
+  flex: none;
+}
+
+/* The turn being reasoned at right now, and only then: a spinner left sitting on a
+   finished row says the work is still going, which is the one thing this row must not
+   say once it has stopped. It is drawn here rather than left to the platform so the
+   turn is the same length of time every time, and slow enough to read as thinking
+   rather than as a page that has stopped responding. */
+.chainIconSpin {
+  animation: kc-spin 2s linear infinite;
+}
+
+@keyframes kc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* The row being written is given the room a shimmering name needs, which is more than
+   the plain name is allowed to take: the effect is drawn with a moving background, and
+   a name clipped to a fixed width clips the effect with it. */
+.chainLabel {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  min-width: 0;
+  font-weight: 500;
+  text-align: left;
+}
+
+/* How many steps, as part of the label rather than beside it: it is one fact about
+   the row, and a second element hanging off the end reads as another control. */
+.chainCount {
+  font-size: var(--kc-font-xs);
+  font-weight: 400;
+  color: var(--kc-text-dim);
+}
+
+.chainChev {
+  flex: none;
+  transition: transform 0.15s var(--kc-ease);
+}
+
+.chain[data-state="open"] .chainChev {
+  transform: rotate(180deg);
+}
+
+.chainBody {
+  margin-top: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* One action in the chain.
+ *
+ * It is a block that fills the chain rather than a row that sizes to its contents: the
+ * name beside the chevron is what the row is for, and a row that shrinks to fit it
+ * puts the name in a column one character wide and wraps every word down the page. */
+.chainStep {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+
+.chainStepTrigger {
+  width: 100%;
+  min-width: 0;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-xs);
+  transition: color 0.15s var(--kc-ease);
+}
+
+.chainStepTrigger:hover {
+  color: var(--kc-text);
+}
+
+.chainStepIcon {
+  flex: none;
+}
+
+/* The name takes what it needs and gives the rest back, so a long name is cut with an
+   ellipsis on one line rather than pushing the chevron off the edge. It is not given
+   the whole row: the word count and the chevron belong to the same line, and a name
+   that filled it would push both off the end. */
+.chainStepName {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.chainStepSize {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.chainStepChev {
+  flex: none;
+  transition: transform 0.15s var(--kc-ease);
+}
+
+.chainStep[data-state="open"] .chainStepChev {
+  transform: rotate(180deg);
+}
+
+/*
+ * The ten lines.
+ *
+ * A step that opens into a page of text is a step that pushes the answer it belongs
+ * to off the screen, and the person reading wanted to see the answer. So the content
+ * is a fixed-height box with its own scrollbar: the whole step is always visible, and
+ * how much of it is visible is a decision the person makes by scrolling rather than
+ * one this layout makes for them.
+ *
+ * Ten lines is measured in lines rather than in pixels — `10lh` is ten of this
+ * element's own line-heights, so the cap stays ten lines whatever the font size is
+ * and whatever it is inherited from. The em rule before it is what a browser without
+ * `lh` uses instead, and it is a close fit rather than a guess at the same number.
+ */
+.chainStepBody {
+  margin-top: 2px !important;
+  max-height: 13em;
+  max-height: 10lh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 10px;
+  border-left: 1px solid var(--kc-border);
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+  overflow-wrap: break-word;
+  /* The bar is drawn rather than left to the platform, because a box that can scroll
+     and a box that cannot look identical until you try: the platform's own bar is
+     either a wide grey slab against this surface or an overlay that only exists while
+     something is already moving, and both leave a person unable to tell whether the
+     step has more in it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--kc-border-strong) transparent;
+}
+
+.chainStepBody::-webkit-scrollbar {
+  width: 9px;
+}
+
+.chainStepBody::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chainStepBody::-webkit-scrollbar-thumb {
+  background: var(--kc-border-strong);
+  border: 2px solid transparent;
+  border-radius: 5px;
+  background-clip: content-box;
+}
+
+.chainStepBody::-webkit-scrollbar-thumb:hover {
+  background: var(--kc-text-faint);
+  background-clip: content-box;
+}
+
+.chainStepBody > :first-child {
+  margin-top: 0;
+}
+
+.chainStepBody > :last-child {
+  margin-bottom: 0;
+}
+
+/* The reasoning content puts its class on the box and on the markdown inside it, so
+   the cap lands on both — and one piece of text with two scrollbars is a control
+   nobody can work out which one to use. The box is the one that scrolls. */
+.chainStepBody > * {
+  max-height: none;
+  overflow: visible;
+}
+
+/* While a turn is on its way. In the column rather than in a corner, because it
+   belongs to the turn it is waiting for. */
+.waiting {
+  padding: 2px 0 6px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text-dim);
+}
+
+/* A turn that was cut off says so on the turn rather than in a corner. Half an
+   answer is a record of what was said, and it is read as part of the message. */
+.incomplete {
+  margin-top: 6px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-warn);
+}
+
+/* A block this build does not know how to draw. It is shown as itself rather than
+   dropped, because a message with a piece quietly missing looks like a message
+   that was never there. */
+.unknownBlock {
+  margin: 0;
+  padding: 10px 12px;
+  overflow-x: auto;
+  border: 1px dashed var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text-dim);
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-xs);
+  line-height: 1.6;
+}
+
+/* A tab that points at a conversation which is gone. The two buttons are the two
+   things a person can do about it, and the quiet one is the one that undoes the
+   mistake rather than continuing past it. */
+.gone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  max-width: 380px;
+  padding: 0 24px;
+  text-align: center;
+  color: var(--kc-text-dim);
+}
+
+.goneTitle {
+  margin: 0;
+  font-size: var(--kc-font-md);
+  font-weight: 600;
+  color: var(--kc-text);
+}
+
+.goneBody {
+  margin: 0;
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+}
+
+.goneActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.goneButton {
+  padding: 6px 14px;
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s var(--kc-ease);
+}
+
+.goneButton:hover {
+  background: var(--kc-surface);
+}
+
+.goneButtonQuiet {
+  background: transparent;
+  color: var(--kc-text-dim);
+}
+
+.goneButtonQuiet:hover {
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+}
+
+/* A failure, in the place where the turn it belongs to is. */
+.conversationError {
+  margin: 0 auto 8px;
+  max-width: 760px;
+  padding: 9px 12px;
+  border: 1px solid var(--kc-danger);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-danger-bg);
+  color: var(--kc-danger);
+  font-size: var(--kc-font-sm);
+  line-height: 1.7;
+  overflow-wrap: break-word;
+}
+
+/* The one thing this form cannot be without. It says so in its own words rather
+   than in an edge, because the edge belongs to the container the button sits in. */
+.chipNeeded {
+  color: var(--kc-text);
+}
+
+.send {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: transparent;
+  color: var(--kc-text);
+}
+.send:hover {
+  background: var(--kc-hover);
+}
+.send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* 会话变体：运行中的中断按钮（与发送键同位） */
+/* 会话变体：运行中的中断按钮 —— 半透明正圆，中间奶白色圆角矩形（停止块） */
+.stop {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-left: 4px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+}
+.stop:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.stopBox {
+  width: 9px;
+  height: 9px;
+  border-radius: 2.5px;
+  background: #f2ede3;
+}
+
+/* C15 撤销/重做：与发送键同排的方形小按钮，空栈时置灰 */
+.step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 4px;
+  border: none;
+  border-radius: var(--kc-radius-sm, 6px);
+  background: transparent;
+  color: inherit;
+}
+.step:hover:not(:disabled) {
+  background: var(--kc-hover);
+}
+.step:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+/* 只读开关（会话内 FS/Shell/Memory 展示为创建时状态，不可改） */
+.toggleStatic {
+  cursor: default;
+}
+.toggleStatic:hover {
+  background: none;
+}
+
+/* 向上展开的下拉 */
+.shield {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+.upMenu {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  z-index: 61;
+  min-width: 200px;
+  max-width: 320px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+
+/* 级联菜单外壳：内含向右弹出的子菜单，必须自身不裁剪 */
+.upMenuCascade {
+  overflow: visible;
+}
+
+/* 供应商子菜单：从父项向右弹出（模型列表 / 兼容接口输入） */
+.sideMenu {
+  position: absolute;
+  left: calc(100% + 6px);
+  bottom: -4px;
+  z-index: 62;
+  min-width: 190px;
+  max-width: 300px;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+}
+
+.menuChevRight {
+  margin-left: auto;
+  color: var(--kc-text-faint);
+}
+
+/* 上下文指示器（环 + 数字胶囊）与信息行 */
+.ctxBtn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 8px;
+  border: none;
+  border-radius: 13px;
+  background: none;
+}
+.ctxBtn:hover {
+  background: var(--kc-hover);
+}
+.ctxNum {
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-dim);
+  white-space: nowrap;
+  line-height: 1;
+}
+.ctxWarn {
+  color: var(--kc-warn, #d9a13c);
+}
+.ctxDanger {
+  color: var(--kc-danger);
+}
+.ring {
+  display: block;
+  flex-shrink: 0;
+}
+.kvLine {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 3px 8px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-dim);
+  white-space: nowrap;
+}
+.kvLine span:last-child {
+  color: var(--kc-text);
+}
+
+.kvLine span.kvErr,
+.kvErr {
+  color: var(--kc-danger);
+}
+
+/* 会话观测·回合明细行（上下文弹层内，等宽小字） */
+.turnRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 8px;
+  font-size: var(--kc-font-xs);
+  font-family: var(--kc-font-mono);
+  color: var(--kc-text-dim);
+  white-space: nowrap;
+}
+.turnRow:hover {
+  background: var(--kc-hover);
+}
+.turnRow span:first-child {
+  width: 28px;
+  color: var(--kc-text-faint);
+  flex-shrink: 0;
+}
+.turnRow span:nth-child(2) {
+  width: 48px;
+  color: var(--kc-text);
+  flex-shrink: 0;
+}
+.turnRow span:nth-child(3) {
+  width: 92px;
+  flex-shrink: 0;
+}
+.turnRow span:last-child {
+  color: var(--kc-text-faint);
+}
+
+.upMenuLeft {
+  left: 0;
+}
+.upMenuRight {
+  right: 0;
+}
+
+.menuItem {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text);
+  font-size: var(--kc-font-sm);
+  text-align: left;
+  white-space: nowrap;
+}
+.menuItem:hover {
+  background: var(--kc-hover);
+}
+.menuOn {
+  background: var(--kc-accent-bg);
+}
+.menuStatic {
+  cursor: default;
+}
+.menuSub {
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 执行模式控件（加号右侧的 chip）与它的向上菜单 */
+.execChip {
+  max-width: 150px;
+  background: var(--kc-surface-2);
+  color: var(--kc-text);
+}
+.execChip:hover {
+  background: var(--kc-hover);
+}
+
+.execMenu {
+  min-width: 230px;
+}
+
+/* 菜单项两行：模式名一行，说明小字在它自己的下一行，绝不与名字同行 */
+.execItem {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  white-space: normal;
+}
+
+.execNameRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--kc-text);
+  font-weight: 500;
+}
+
+/* 等待恢复：链内的最后一行，说明这一轮在等什么 */
+.chainWait {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 0 2px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-dim);
+}
+
+/* 权限模式菜单项：图标 + 两行（模式名 / 介绍小字） */
+.modeItem {
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+}
+
+.modeIcon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--kc-radius-sm);
+  /* 透明背景：去掉色块底，图标直接落在菜单底色上，与整体扁平风格一致 */
+  background: transparent;
+  color: var(--kc-info);
+  flex-shrink: 0;
+}
+
+.modeIconDanger {
+  color: var(--kc-danger);
+}
+
+.modeTexts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  text-align: left;
+}
+
+.modeName {
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+}
+
+.menuSection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px 3px;
+  font-size: var(--kc-font-xs);
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--kc-text-faint);
+}
+
+/* 加号大面板：附件 / 插件 / 文件 三组 */
+.plusPanel {
+  min-width: 440px;
+  max-width: 480px;
+  max-height: 380px;
+}
+
+.pickRow {
+  display: block;
+  margin: 2px 4px 6px;
+  padding: 8px 10px;
+  border: 1px dashed var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  color: var(--kc-text-dim);
+  font-size: var(--kc-font-sm);
+  cursor: pointer;
+}
+.pickRow:hover {
+  color: var(--kc-text);
+  border-color: var(--kc-accent-border);
+  background: var(--kc-hover);
+}
+
+.fileChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0 4px 8px;
+}
+.fileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 200px;
+  padding: 3px 4px 3px 9px;
+  border: 1px solid var(--kc-border);
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-surface-2);
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileChipX {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  color: var(--kc-text-faint);
+}
+.fileChipX:hover {
+  color: var(--kc-text);
+  background: var(--kc-hover);
+}
+
+/* 输入联想面板（/ 能力、$ 技能）：贴着输入区上沿整宽弹出 */
+.inputWrap {
+  position: relative;
+}
+.suggestMenu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 61;
+  padding: 4px;
+  background: var(--kc-elevated);
+  border: 1px solid var(--kc-border-strong);
+  border-radius: var(--kc-radius-md);
+  box-shadow: var(--kc-shadow-2);
+  display: flex;
+  flex-direction: column;
+  animation: kc-fade-up 0.15s var(--kc-ease);
+}
+
+.menuCurrent {
+  padding: 2px 10px 6px;
+  font-family: var(--kc-font-mono);
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+}
+
+.menuNote {
+  padding: 7px 10px;
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+  line-height: 1.6;
+  white-space: normal;
+}
+
+.inputRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px 6px;
+}
+.inputBtn {
+  padding: 6px 12px;
+  border: none;
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-btn-bg);
+  color: var(--kc-btn-fg);
+  font-size: var(--kc-font-xs);
+  flex-shrink: 0;
+}
+.inputBtn:hover {
+  background: var(--kc-btn-hover);
+}
+
+/* 能力包开关（加号菜单内） */
+.toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: var(--kc-radius-sm);
+  background: none;
+  text-align: left;
+}
+.toggle:hover {
+  background: var(--kc-hover);
+}
+.toggleOn {
+  background: var(--kc-accent-bg);
+}
+
+.toggleText {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  font-size: var(--kc-font-sm);
+  color: var(--kc-text);
+}
+.toggleDesc {
+  font-size: var(--kc-font-xs);
+  color: var(--kc-text-faint);
+}
+
+.switchTrack {
+  width: 28px;
+  height: 16px;
+  border-radius: 8px;
+  background: var(--kc-border-strong);
+  position: relative;
+  flex-shrink: 0;
+  transition: background 0.15s var(--kc-ease);
+}
+.toggleOn .switchTrack {
+  background: var(--kc-accent-dim);
+}
+.switchKnob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--kc-btn-fg);
+  transition: transform 0.15s var(--kc-ease);
+}
+.switchKnobOn {
+  transform: translateX(12px);
+}
+
+.error {
+  margin-top: 14px;
+  padding: 8px 12px;
+  border-radius: var(--kc-radius-md);
+  background: var(--kc-danger-bg);
+  border: 1px solid var(--kc-danger);
+  color: var(--kc-danger);
+  font-size: var(--kc-font-sm);
+}
+
+.spin {
+  animation: kc-spin 1s linear infinite;
+}
+
+
+/* ===========================================================================
+   本项目追加（Added by this project）
+   ---------------------------------------------------------------------------
+   以上是参考项目原版，逐字节未改。以下是本项目在其之上的差异。
+   =========================================================================== */
+
+/*
+ * 输入容器只要边框。
+ *
+ * 原版 .card 是 边框 + 圆角 + 背景 + 阴影，另有 .card:focus-within 在聚焦时把边框
+ * 改色。本项目只保留边框与圆角：
+ *
+ *   background    — 删。表面只有里面有东西的那一层才该凸出来；底下这层装的是
+ *                   上沿的目录、输入框、底排按钮，全都是控件没有内容，叠两层
+ *                   只会多一层要看的东西。
+ *   box-shadow    — 删。没有底就没有影子可投。
+ *   :focus-within — 删。聚焦变色是"这里被激活了"的信号，而聚焦这件事在这个窗口
+ *                   里已经由光标本身表达了。边框再变一次色，是在重复同一个信息，
+ *                   而且重复的那一次没有别的东西可看，只能盯着边框看。
+ *
+ * 所以这条线恒定。一直在的线告诉人"这里是输入区"；会变的线要人分辨它变没变过，
+ * 而分辨的成本高于它传达的信息。
+ *
+ * 覆写而非新建类名：.card 的边框、圆角、内边距都是原版已经算好的，重写一遍只会
+ * 和原版慢慢分叉。
+ */
+.card {
+  background: none;
+  box-shadow: none;
+}
+.card:focus-within {
+  border-color: var(--kc-border-strong);
+}

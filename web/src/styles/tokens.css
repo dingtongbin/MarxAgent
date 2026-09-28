@@ -1,0 +1,208 @@
+/*
+ * MarxAgent design tokens — the single source of every colour, space, size and radius.
+ *
+ * The Tailwind theme and every component read these variables. A component does not
+ * write down a colour, a padding, a radius or a font size; it says what a thing is
+ * for, and this file decides what that looks like.
+ *
+ * The governing decision is that the accent is grey.
+ *
+ * A tool somebody spends a whole day in is read for hours, and a coloured accent is
+ * competing with the content for attention the whole time. So the accent carries
+ * selection, the primary button and the running state, and it carries no hue at all —
+ * only lightness. Colour is reserved for state: something is added, removed, wrong,
+ * or waiting. A screen with colour on it is a screen where something happened.
+ *
+ * Both themes are here, and every token is set in both. A token that exists in one
+ * theme is a token that is somebody's background in the other.
+ */
+
+/* ===== Dark (the default) ===== */
+[data-theme='dark'] {
+  /*
+   * Three layers, and the middle of the screen is the darkest of them.
+   *
+   * This is inverted from the usual instinct and it is deliberate. The panels are
+   * furniture and the work area is the work, so the work recedes and the furniture
+   * frames it. A person scanning for the thing they are reading finds it because it is
+   * the calmest part of the window, not because it is decorated.
+   */
+  --kc-bg: #0d0d0d;
+  --kc-panel: #232323;
+  --kc-surface: #2a2a2a;
+  --kc-workspace: #191919;
+  --kc-surface-2: #222222;
+  --kc-elevated: #2e2e2e;
+  --kc-hover: #2f2f2f;
+
+  --kc-border: #333333;
+  --kc-border-strong: #3d3d3d;
+
+  /*
+   * Text. All three are solid colours, and all three clear 4.5:1 against the surfaces
+   * they sit on.
+   *
+   * The obvious move for a third, quieter tier of text is a dimmer grey drawn at
+   * reduced opacity. It is a bad move twice over: opacity puts the real colour at a
+   * contrast nobody chose, and it differs per background, so a piece of text that is
+   * readable on a panel is unreadable on the canvas. A third tier is a third colour
+   * that is simply still legible.
+   */
+  --kc-text: #d4d4d4;
+  --kc-text-dim: #adadad;
+  --kc-text-faint: #8a8a8a;
+
+  /* The accent: lightness only, no chroma. */
+  --kc-accent: #8f8f8f;
+  --kc-accent-dim: #3c3c3c;
+  --kc-accent-bg: rgba(255, 255, 255, 0.06);
+  --kc-accent-border: rgba(255, 255, 255, 0.14);
+
+  --kc-btn-bg: #3c3c3c;
+  --kc-btn-hover: #474747;
+  --kc-btn-fg: #ffffff;
+
+  /* State. These are the only colours on the screen that mean something. */
+  --kc-ok: #57ab5a;
+  --kc-ok-bg: rgba(87, 171, 90, 0.13);
+  --kc-danger: #e5534b;
+  --kc-danger-bg: rgba(229, 83, 75, 0.13);
+  --kc-warn: #c69026;
+  --kc-warn-bg: rgba(198, 144, 38, 0.13);
+  --kc-info: #539bf5;
+  --kc-info-bg: rgba(83, 155, 245, 0.13);
+
+  /* A change being proposed. A separate pair from the state colours above because a
+     removed line is not the same thing as something going wrong, and reusing one
+     colour for both makes a deletion look like a fault. */
+  --kc-diff-add: #57ab5a;
+  --kc-diff-add-bg: rgba(87, 171, 90, 0.12);
+  --kc-diff-del: #e5534b;
+  --kc-diff-del-bg: rgba(229, 83, 75, 0.12);
+
+  --kc-bubble: #242424;
+  --kc-code-bg: #141414;
+
+  /*
+   * Code, one colour per kind of token.
+   *
+   * These exist because most of what this tool shows is code, and code rendered as
+   * one flat colour cannot be scanned. A person reviewing a change reads structure
+   * first — where the function starts, what the strings are, what is a comment — and
+   * they cannot do that without these.
+   */
+  --kc-tok-keyword: #cc95c9;
+  --kc-tok-string: #96c47f;
+  --kc-tok-number: #d9a05e;
+  --kc-tok-comment: #8a8a8a;
+  --kc-tok-function: #7ba7d8;
+  --kc-tok-type: #cbb27a;
+  --kc-tok-punct: #9a9a9a;
+  --kc-tok-attr: #cbb27a;
+
+  --kc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --kc-shadow-2: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+
+/* ===== Light ===== */
+[data-theme='light'] {
+  --kc-bg: #fbfbfb;
+  --kc-panel: #e2e2e2;
+  --kc-surface: #ededed;
+  --kc-workspace: #ffffff;
+  --kc-surface-2: #f2f2f2;
+  --kc-elevated: #ffffff;
+  --kc-hover: #e6e6e6;
+
+  --kc-border: #dedede;
+  --kc-border-strong: #cccccc;
+
+  --kc-text: #1f1f1f;
+  --kc-text-dim: #4a4a4a;
+  --kc-text-faint: #5c5c5c;
+
+  --kc-accent: #6e6e6e;
+  --kc-accent-dim: #2d2d2d;
+  --kc-accent-bg: rgba(0, 0, 0, 0.05);
+  --kc-accent-border: rgba(0, 0, 0, 0.14);
+
+  --kc-btn-bg: #2d2d2d;
+  --kc-btn-hover: #3d3d3d;
+  --kc-btn-fg: #ffffff;
+
+  --kc-ok: #1a7f37;
+  --kc-ok-bg: rgba(26, 127, 55, 0.1);
+  --kc-danger: #cf222e;
+  --kc-danger-bg: rgba(207, 34, 46, 0.08);
+  --kc-warn: #9a6700;
+  --kc-warn-bg: rgba(154, 103, 0, 0.1);
+  --kc-info: #0969da;
+  --kc-info-bg: rgba(9, 105, 218, 0.08);
+
+  --kc-diff-add: #1a7f37;
+  --kc-diff-add-bg: rgba(26, 127, 55, 0.09);
+  --kc-diff-del: #cf222e;
+  --kc-diff-del-bg: rgba(207, 34, 46, 0.08);
+
+  --kc-bubble: #f1f1f1;
+  --kc-code-bg: #f7f7f7;
+
+  --kc-tok-keyword: #cf3187;
+  --kc-tok-string: #0a7d32;
+  --kc-tok-number: #b3540e;
+  --kc-tok-comment: #5c5c5c;
+  --kc-tok-function: #6639ba;
+  --kc-tok-type: #9a6700;
+  --kc-tok-punct: #5c5c5c;
+  --kc-tok-attr: #9a6700;
+
+  --kc-shadow-1: 0 1px 2px rgba(0, 0, 0, 0.08);
+  --kc-shadow-2: 0 4px 16px rgba(0, 0, 0, 0.12);
+}
+
+:root {
+  /*
+   * Space. Four pixels, and then the steps that are actually used.
+   *
+   * A scale of one and a half times the unit and a dozen arbitrary gaps produces a
+   * layout where nothing lines up, because 10 and 12 and 14 are all reachable and
+   * none of them relate. Every gap is one of these.
+   */
+  --kc-space-1: 4px;
+  --kc-space-2: 8px;
+  --kc-space-3: 12px;
+  --kc-space-4: 16px;
+  --kc-space-6: 24px;
+  --kc-space-8: 32px;
+
+  /*
+   * Sizes, one larger than the usual desktop scale.
+   *
+   * Small text in a dim colour on a dark background goes soft, and the softness reads
+   * as the text being wrong. Enlarging everything by a pixel is the cheapest way to
+   * make the same colours legible, and it costs nothing but width.
+   */
+  --kc-font-xs: 12px;
+  --kc-font-sm: 13.5px;
+  --kc-font-md: 15px;
+  --kc-font-lg: 17px;
+  --kc-font-xl: 21px;
+  --kc-font-2xl: 27px;
+
+  /* The monospace stack lists the specific faces before the generic one, because the
+     generic monospace is whatever the operating system picked and it varies far more
+     than the sans stack does. A window whose chrome changes metrics between machines
+     is a window whose columns stop lining up. The CJK faces are there because a
+     path or an identifier can contain them. */
+  --kc-font-mono: 'Cascadia Code', 'JetBrains Mono', Consolas, 'Sarasa Mono SC', monospace;
+  --kc-font-sans:
+    -apple-system, 'Segoe UI Variable', 'Segoe UI', 'Microsoft YaHei UI', Roboto, sans-serif;
+
+  /* Radii. Restrained, because a window corner is not a card. */
+  --kc-radius-sm: 4px;
+  --kc-radius-md: 6px;
+  --kc-radius-lg: 10px;
+  --kc-radius-ws: 8px;
+
+  --kc-ease: cubic-bezier(0.25, 0.8, 0.35, 1);
+}

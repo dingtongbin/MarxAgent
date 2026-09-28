@@ -254,7 +254,26 @@ func TestAnthropicBuildRequestTable(t *testing.T) {
 			wantErr: "no convertible block",
 		},
 		{
-			name: "a reasoning block cannot be replayed",
+			name: "a reasoning block is dropped, the rest of the message survives",
+			mutate: func(request *core.ChatRequest) {
+				request.Messages = append(request.Messages, core.Message{
+					ID:   "2",
+					Role: core.RoleAssistant,
+					Content: []core.ContentBlock{
+						{Type: core.ContentTypeReasoning, EncryptedContent: "opaque"},
+						{Type: core.ContentTypeText, Text: "answer"},
+					},
+				})
+			},
+			check: func(t *testing.T, payload *anthropicRequest) {
+				blocks := payload.Messages[1].Content
+				if len(blocks) != 1 || blocks[0].Type != "text" || blocks[0].Text != "answer" {
+					t.Fatalf("reasoning block was not dropped without losing the answer: %#v", blocks)
+				}
+			},
+		},
+		{
+			name: "a reasoning-only assistant message has nothing left to send",
 			mutate: func(request *core.ChatRequest) {
 				request.Messages = append(request.Messages, core.Message{
 					ID:      "2",
@@ -262,7 +281,7 @@ func TestAnthropicBuildRequestTable(t *testing.T) {
 					Content: []core.ContentBlock{{Type: core.ContentTypeReasoning, EncryptedContent: "opaque"}},
 				})
 			},
-			wantErr: "cannot be sent in an assistant message",
+			wantErr: "no convertible block",
 		},
 		{
 			name: "tool results become a user message with tool_result blocks",
